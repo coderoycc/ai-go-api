@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # AI Orchestrator Engine (Go API)
+  # ==========================================
+  ai-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-orchestrator-engine
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - PORT=8080
+      - APP_ENV=${APP_ENV:-dev}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-llama3.1}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://ollama:11434/v1}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - PRODUCTS_SERVICE_URL=${PRODUCTS_SERVICE_URL:-http://host.docker.internal:8081}
+      - SALES_SERVICE_URL=${SALES_SERVICE_URL:-http://host.docker.internal:8082}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # ==========================================
+  # Redis (Memoria Conversacional de Sesiones)
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    container_name: ai-redis-memory
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # ==========================================
+  # Ollama (LLM Local para desarrollo sin tokens)
+  # ==========================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai-ollama-local
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+volumes:
+  redis_data:
+  ollama_data:
+
+networks:
+  ai-network:
+    driver: bridge

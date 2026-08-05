@@ -1,0 +1,39 @@
+# Binarios y ejecutable compilado
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/bin/
+/dist/
+server
+
+# Variables de entorno y secretos
+.env
+.env.local
+.env.production
+!.env.example
+
+# IDEs y Editores
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.gemini/
+
+# Archivos de SO
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs y Cobertura de Pruebas
+*.log
+coverage.txt
+coverage.html
+
+# Directorios de datos locales de Docker
+ollama_data/
+redis_data/
