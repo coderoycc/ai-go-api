@@ -2,34 +2,51 @@ package ports
 
 import "context"
 
-// Product representa un producto del microservicio de Productos.
-type Product struct {
-	// ID es el identificador único del producto.
-	ID string `json:"id"`
-	// Name es el nombre del producto.
-	Name string `json:"name"`
-	// Description es la descripción detallada del producto.
-	Description string `json:"description,omitempty"`
-	// Price es el precio unitario del producto.
-	Price float64 `json:"price"`
-	// Stock es la cantidad disponible en inventario.
-	Stock int `json:"stock"`
-	// Category es la categoría del producto.
-	Category string `json:"category,omitempty"`
+// SearchProductsRequest encapsula los filtros combinables del body del endpoint
+// POST /api/productos/buscar. Todos los campos son opcionales.
+type SearchProductsRequest struct {
+	Codigo        string   `json:"codigo,omitempty"`
+	Nombre        string   `json:"nombre,omitempty"`
+	PalabrasClave []string `json:"palabras_clave,omitempty"`
+	Etiquetas     []string `json:"etiquetas,omitempty"`
+	Marca         []string `json:"marca,omitempty"`
+	Tipo          []string `json:"tipo,omitempty"`
+	Categoria     []string `json:"categoria,omitempty"`
+	PrecioMin     float64  `json:"precio_min,omitempty"`
+	PrecioMax     float64  `json:"precio_max,omitempty"`
+	Orden         string   `json:"orden,omitempty"`
+	Pagina        int      `json:"pagina,omitempty"`
+	Limite        int      `json:"limite,omitempty"`
 }
 
-// ProductClient define el contrato para comunicarse con el microservicio de Productos.
+// ProductSearchResponse es el wrapper que devuelve el endpoint de búsqueda.
+type ProductSearchResponse struct {
+	Total            int            `json:"total"`
+	Pagina           int            `json:"pagina"`
+	Limite           int            `json:"limite"`
+	FiltrosAplicados map[string]any `json:"filtros_aplicados"`
+	Productos        []Product      `json:"productos"`
+}
+
+// Product representa un item del array "productos" devuelto por la API.
+type Product struct {
+	Codigo       string   `json:"codigo"`
+	Nombre       string   `json:"nombre"`
+	Marca        string   `json:"marca"`
+	Categoria    string   `json:"categoria"`
+	Precio       float64  `json:"precio"`
+	Tipo         string   `json:"tipo"`
+	Stock        int      `json:"stock"`
+	Descripcion  string   `json:"descripcion"`
+	Etiquetas    []string `json:"etiquetas"`
+	PalabrasClave []string `json:"palabras_clave"`
+	Imagen       string   `json:"imagen"`
+}
+
+// ProductClient define el contrato para comunicarse con la API externa.
 // Los adaptadores implementan esta interfaz para conectarse via HTTP, gRPC u otro protocolo.
 type ProductClient interface {
-	// SearchProducts busca productos que coincidan con el término de búsqueda.
-	// Retorna una lista de productos y error si la consulta falla.
-	SearchProducts(ctx context.Context, query string) ([]Product, error)
-
-	// GetProductByID obtiene un producto específico por su identificador.
-	// Retorna error si el producto no existe.
-	GetProductByID(ctx context.Context, id string) (*Product, error)
-
-	// CheckStock verifica la disponibilidad de stock de un producto.
-	// Retorna la cantidad disponible y error si la consulta falla.
-	CheckStock(ctx context.Context, productID string) (int, error)
+	// SearchProducts consulta la API de búsqueda de productos con los filtros
+	// dados. Retorna el wrapper de resultados y error si la consulta falla.
+	SearchProducts(ctx context.Context, req SearchProductsRequest) (*ProductSearchResponse, error)
 }

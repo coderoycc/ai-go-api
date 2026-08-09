@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/coderoycc/ai-go-api/internal/domain/models"
@@ -25,11 +26,14 @@ func NewAdapter(ctx context.Context, apiKey, model string) (*Adapter, error) {
 		model = "gemini-2.5-flash"
 	}
 
+	log.Printf("[gemini] Inicializando adaptador con modelo: %s", model)
+
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
+		log.Printf("[gemini] Error al crear cliente: %v", err)
 		return nil, fmt.Errorf("gemini: error al crear cliente: %w", err)
 	}
 
@@ -51,12 +55,20 @@ func (a *Adapter) Chat(ctx context.Context, req models.ChatRequest) (models.Chat
 		modelName = req.Model
 	}
 
+	log.Printf("[gemini] Chat Request -> Model: %s, Messages: %d, Tools: %d, Temperature: %.2f",
+		modelName, len(req.Messages), len(req.Tools), req.Temperature)
+
 	result, err := a.client.Models.GenerateContent(ctx, modelName, contents, config)
 	if err != nil {
+		log.Printf("[gemini] ERROR en GenerateContent: %+v", err)
 		return models.ChatResponse{}, fmt.Errorf("gemini: error en generate content: %w", err)
 	}
 
-	return mapGeminiResponse(result, modelName), nil
+	response := mapGeminiResponse(result, modelName)
+	log.Printf("[gemini] Chat Response -> Content length: %d, ToolCalls: %d",
+		len(response.Content), len(response.ToolCalls))
+
+	return response, nil
 }
 
 // mapMessagesToGemini convierte mensajes del dominio al formato de contenido de Gemini.
@@ -88,12 +100,16 @@ func mapMessagesToGemini(messages []models.Message) ([]*genai.Content, *genai.Co
 			for _, tc := range msg.ToolCalls {
 				var args map[string]any
 				_ = json.Unmarshal([]byte(tc.Arguments), &args)
-				content.Parts = append(content.Parts, &genai.Part{
+				fcPart := &genai.Part{
 					FunctionCall: &genai.FunctionCall{
 						Name: tc.Name,
 						Args: args,
 					},
-				})
+				}
+				if len(tc.ThoughtSignature) > 0 {
+					fcPart.ThoughtSignature = tc.ThoughtSignature
+				}
+				content.Parts = append(content.Parts, fcPart)
 			}
 			contents = append(contents, content)
 
@@ -186,6 +202,26 @@ func mapToGeminiSchema(params map[string]interface{}) *genai.Schema {
 						propSchema.Type = genai.TypeBoolean
 					case "array":
 						propSchema.Type = genai.TypeArray
+						if itemsMap, ok := propMap["items"].(map[string]interface{}); ok {
+							if itemType, ok := itemsMap["type"].(string); ok {
+								itemSchema := &genai.Schema{}
+								switch itemType {
+								case "string":
+									itemSchema.Type = genai.TypeString
+								case "integer":
+									itemSchema.Type = genai.TypeInteger
+								case "number":
+									itemSchema.Type = genai.TypeNumber
+								case "boolean":
+									itemSchema.Type = genai.TypeBoolean
+								default:
+									itemSchema.Type = genai.TypeString
+								}
+								propSchema.Items = itemSchema
+							}
+						} else {
+							propSchema.Items = &genai.Schema{Type: genai.TypeString}
+						}
 					default:
 						propSchema.Type = genai.TypeString
 					}
@@ -232,9 +268,10 @@ func mapGeminiResponse(result *genai.GenerateContentResponse, modelName string) 
 			if part.FunctionCall != nil {
 				args, _ := json.Marshal(part.FunctionCall.Args)
 				response.ToolCalls = append(response.ToolCalls, models.ToolCall{
-					ID:        part.FunctionCall.Name,
-					Name:      part.FunctionCall.Name,
-					Arguments: string(args),
+					ID:               part.FunctionCall.Name,
+					Name:             part.FunctionCall.Name,
+					Arguments:        string(args),
+					ThoughtSignature: part.ThoughtSignature,
 				})
 			}
 		}

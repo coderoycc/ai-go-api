@@ -8,7 +8,7 @@
 *.out
 /bin/
 /dist/
-server
+/server
 
 # Variables de entorno y secretos
 .env

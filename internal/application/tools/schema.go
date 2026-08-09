@@ -126,6 +126,26 @@ func (m *SchemaMapper) mapToGeminiSchema(params map[string]interface{}) *genai.S
 						propSchema.Type = genai.TypeBoolean
 					case "array":
 						propSchema.Type = genai.TypeArray
+						if itemsMap, ok := propMap["items"].(map[string]interface{}); ok {
+							if itemType, ok := itemsMap["type"].(string); ok {
+								itemSchema := &genai.Schema{}
+								switch itemType {
+								case "string":
+									itemSchema.Type = genai.TypeString
+								case "integer":
+									itemSchema.Type = genai.TypeInteger
+								case "number":
+									itemSchema.Type = genai.TypeNumber
+								case "boolean":
+									itemSchema.Type = genai.TypeBoolean
+								default:
+									itemSchema.Type = genai.TypeString
+								}
+								propSchema.Items = itemSchema
+							}
+						} else {
+							propSchema.Items = &genai.Schema{Type: genai.TypeString}
+						}
 					default:
 						propSchema.Type = genai.TypeString
 					}

@@ -13,6 +13,7 @@ import (
 	"github.com/coderoycc/ai-go-api/internal/application/response"
 	apptools "github.com/coderoycc/ai-go-api/internal/application/tools"
 	"github.com/coderoycc/ai-go-api/internal/domain/models"
+	"github.com/coderoycc/ai-go-api/internal/domain/ports"
 	"github.com/coderoycc/ai-go-api/internal/domain/ports/mocks"
 	infratools "github.com/coderoycc/ai-go-api/internal/infrastructure/tools"
 	"github.com/stretchr/testify/assert"
@@ -25,7 +26,7 @@ func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory,
 		{
 			Name:           "allow_general_and_stock",
 			AllowedIntents: []models.IntentType{models.IntentGeneral, models.IntentCheckStock, models.IntentUnknown},
-			AllowedTools:   []string{"check_stock"},
+			AllowedTools:   []string{"search_products"},
 		},
 		{
 			Name:          "block_sales",
@@ -39,7 +40,7 @@ func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory,
 
 	toolRegistry := apptools.NewRegistry()
 	if mockProduct != nil {
-		_ = toolRegistry.Register(infratools.NewStockCheckTool(mockProduct))
+		_ = toolRegistry.Register(infratools.NewProductSearchTool(mockProduct))
 	}
 
 	toolExecutor := apptools.NewExecutor(toolRegistry, policyEngine)
@@ -122,17 +123,25 @@ func TestOrchestrator_CaseC_ToolCallingExecution(t *testing.T) {
 	mockMemory.On("Load", mock.Anything, "session-tool").Return((*models.SessionContext)(nil), nil)
 	mockMemory.On("Save", mock.Anything, "session-tool", mock.Anything).Return(nil)
 
-	// Mock del cliente de microservicio de productos
-	mockProduct.On("CheckStock", mock.Anything, "PROD-99").Return(15, nil)
+	// Mock de la API externa
+	mockProduct.On("SearchProducts", mock.Anything, ports.SearchProductsRequest{Codigo: "PROD-99"}).Return(
+		&ports.ProductSearchResponse{
+			Total: 1,
+			Productos: []ports.Product{
+				{Codigo: "PROD-99", Nombre: "Laptop HP", Precio: 1200, Stock: 15},
+			},
+		},
+		nil,
+	)
 
-	// Primera llamada al LLM: Retorna ToolCall para check_stock
+	// Primera llamada al LLM: Retorna ToolCall para search_products
 	firstLLMResp := models.ChatResponse{
 		Content: "",
 		ToolCalls: []models.ToolCall{
 			{
 				ID:        "call_abc123",
-				Name:      "check_stock",
-				Arguments: `{"product_id": "PROD-99"}`,
+				Name:      "search_products",
+				Arguments: `{"codigo": "PROD-99"}`,
 			},
 		},
 		Usage: &models.TokenUsage{TotalTokens: 30},
@@ -160,7 +169,7 @@ func TestOrchestrator_CaseC_ToolCallingExecution(t *testing.T) {
 	assert.Contains(t, res.Message, "15 unidades disponibles")
 	assert.Equal(t, 50, res.TokensUsed) // 30 + 20 tokens acumulados
 
-	mockProduct.AssertCalled(t, "CheckStock", mock.Anything, "PROD-99")
+	mockProduct.AssertCalled(t, "SearchProducts", mock.Anything, ports.SearchProductsRequest{Codigo: "PROD-99"})
 	mockLLM.AssertNumberOfCalls(t, "Chat", 2)
 }
 
@@ -173,16 +182,16 @@ func TestOrchestrator_CaseD_ToolExecutionFailure(t *testing.T) {
 	mockMemory.On("Load", mock.Anything, "session-err").Return((*models.SessionContext)(nil), nil)
 	mockMemory.On("Save", mock.Anything, "session-err", mock.Anything).Return(nil)
 
-	// Microservicio responde con error 404/500
-	mockProduct.On("CheckStock", mock.Anything, mock.Anything).Return(0, errors.New("microservicio no disponible"))
+	// La API externa responde con error 404/500
+	mockProduct.On("SearchProducts", mock.Anything, mock.Anything).Return(nil, errors.New("api no disponible"))
 
 	firstLLMResp := models.ChatResponse{
 		Content: "",
 		ToolCalls: []models.ToolCall{
 			{
 				ID:        "call_err_123",
-				Name:      "check_stock",
-				Arguments: `{"product_id": "PROD-ERR"}`,
+				Name:      "search_products",
+				Arguments: `{"codigo": "PROD-ERR"}`,
 			},
 		},
 		Usage: &models.TokenUsage{TotalTokens: 15},
@@ -208,5 +217,5 @@ func TestOrchestrator_CaseD_ToolExecutionFailure(t *testing.T) {
 
 	assert.Equal(t, response.ModeNatural, res.Mode)
 	assert.Contains(t, res.Message, "problema con el sistema de inventario")
-	mockProduct.AssertCalled(t, "CheckStock", mock.Anything, "PROD-ERR")
+	mockProduct.AssertCalled(t, "SearchProducts", mock.Anything, mock.Anything)
 }

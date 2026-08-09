@@ -58,6 +58,8 @@ type ToolCall struct {
 	Name string `json:"name"`
 	// Arguments contiene los argumentos serializados como JSON string para la herramienta.
 	Arguments string `json:"arguments"`
+	// ThoughtSignature almacena la firma de razonamiento opcional requerida por Gemini en tool calling.
+	ThoughtSignature []byte `json:"thought_signature,omitempty"`
 }
 
 // ChatRequest encapsula la petición que se envía al puerto LLM.

@@ -52,10 +52,9 @@ func (r RedisConfig) Addr() string {
 	return fmt.Sprintf("%s:%s", r.Host, r.Port)
 }
 
-// ClientsConfig define las URLs base y timeouts para microservicios externos.
+// ClientsConfig define la URL base y timeout para la API externa.
 type ClientsConfig struct {
 	ProductsURL string
-	SalesURL    string
 	Timeout     time.Duration
 }
 
@@ -90,7 +89,6 @@ func Load() (*Config, error) {
 		},
 		Clients: ClientsConfig{
 			ProductsURL: getEnv("PRODUCTS_SERVICE_URL", "http://localhost:8081"),
-			SalesURL:    getEnv("SALES_SERVICE_URL", "http://localhost:8082"),
 			Timeout:     getEnvDuration("CLIENTS_TIMEOUT", 5*time.Second),
 		},
 	}

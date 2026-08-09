@@ -1,12 +1,12 @@
 package products
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/coderoycc/ai-go-api/internal/domain/ports"
@@ -32,18 +32,24 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 	}
 }
 
-// SearchProducts busca productos que coincidan con el término de búsqueda
-// llamando al endpoint GET /products?q={query} del microservicio.
-func (c *Client) SearchProducts(ctx context.Context, query string) ([]ports.Product, error) {
-	endpoint := fmt.Sprintf("%s/products?q=%s", c.baseURL, url.QueryEscape(query))
+// SearchProducts consulta la API de búsqueda de productos
+// enviando los filtros como body JSON al endpoint POST /api/productos/buscar.
+func (c *Client) SearchProducts(ctx context.Context, req ports.SearchProductsRequest) (*ports.ProductSearchResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("products: error al serializar request: %w", err)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	endpoint := c.baseURL + "/productos/buscar"
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("products: error al crear request de búsqueda: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("products: error al buscar productos: %w", err)
 	}
@@ -53,72 +59,12 @@ func (c *Client) SearchProducts(ctx context.Context, query string) ([]ports.Prod
 		return nil, err
 	}
 
-	var products []ports.Product
-	if err := decodeJSON(resp.Body, &products); err != nil {
+	var result ports.ProductSearchResponse
+	if err := decodeJSON(resp.Body, &result); err != nil {
 		return nil, fmt.Errorf("products: error al decodificar respuesta de búsqueda: %w", err)
 	}
 
-	return products, nil
-}
-
-// GetProductByID obtiene un producto específico por su ID
-// llamando al endpoint GET /products/{id} del microservicio.
-func (c *Client) GetProductByID(ctx context.Context, id string) (*ports.Product, error) {
-	endpoint := fmt.Sprintf("%s/products/%s", c.baseURL, url.PathEscape(id))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("products: error al crear request por ID: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("products: error al obtener producto %s: %w", id, err)
-	}
-	defer resp.Body.Close()
-
-	if err := checkHTTPError(resp, "obtener producto"); err != nil {
-		return nil, err
-	}
-
-	var product ports.Product
-	if err := decodeJSON(resp.Body, &product); err != nil {
-		return nil, fmt.Errorf("products: error al decodificar producto %s: %w", id, err)
-	}
-
-	return &product, nil
-}
-
-// CheckStock verifica la disponibilidad de stock de un producto
-// llamando al endpoint GET /products/{id}/stock del microservicio.
-func (c *Client) CheckStock(ctx context.Context, productID string) (int, error) {
-	endpoint := fmt.Sprintf("%s/products/%s/stock", c.baseURL, url.PathEscape(productID))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return 0, fmt.Errorf("products: error al crear request de stock: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("products: error al verificar stock de %s: %w", productID, err)
-	}
-	defer resp.Body.Close()
-
-	if err := checkHTTPError(resp, "verificar stock"); err != nil {
-		return 0, err
-	}
-
-	var result struct {
-		Stock int `json:"stock"`
-	}
-	if err := decodeJSON(resp.Body, &result); err != nil {
-		return 0, fmt.Errorf("products: error al decodificar stock de %s: %w", productID, err)
-	}
-
-	return result.Stock, nil
+	return &result, nil
 }
 
 // checkHTTPError verifica el código de estado HTTP y retorna un error descriptivo

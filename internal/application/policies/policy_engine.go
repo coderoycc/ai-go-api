@@ -39,11 +39,6 @@ func DefaultEngine() *Engine {
 				},
 				AllowedTools: []string{
 					"search_products",
-					"get_product",
-					"check_stock",
-					"create_sale",
-					"get_sale",
-					"cancel_sale",
 				},
 			},
 			{
