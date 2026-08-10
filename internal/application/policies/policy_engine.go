@@ -38,7 +38,8 @@ func DefaultEngine() *Engine {
 					models.IntentGeneral,
 				},
 				AllowedTools: []string{
-					"search_products",
+					"product_advanced_search",
+					"product_stock_check",
 				},
 			},
 			{

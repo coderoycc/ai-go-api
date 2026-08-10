@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -129,7 +130,8 @@ func (o *Orchestrator) handleDirectRoute(ctx context.Context, input ChatInput, s
 	}
 
 	// Agregar respuesta al historial
-	o.contextManager.AddAssistantMessage(ctx, session, result)
+	resultBytes, _ := json.Marshal(result)
+	o.contextManager.AddAssistantMessage(ctx, session, string(resultBytes))
 	o.saveSession(ctx, session)
 
 	return o.formatter.FormatRaw(input.SessionID, string(detectedIntent), result)

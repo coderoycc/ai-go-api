@@ -17,14 +17,13 @@ import (
 	"github.com/coderoycc/ai-go-api/internal/application/response"
 	toolsApp "github.com/coderoycc/ai-go-api/internal/application/tools"
 	"github.com/coderoycc/ai-go-api/internal/domain/ports"
-	productClient "github.com/coderoycc/ai-go-api/internal/infrastructure/clients/products"
 	llmClaude "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/claude"
 	llmDeepSeek "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/deepseek"
 	llmGemini "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/gemini"
 	llmOllama "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/ollama"
 	llmOpenAI "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/openai"
 	redisStore "github.com/coderoycc/ai-go-api/internal/infrastructure/memory/redis"
-	toolsInfra "github.com/coderoycc/ai-go-api/internal/infrastructure/tools"
+	productsTools "github.com/coderoycc/ai-go-api/internal/infrastructure/tools/products"
 	config "github.com/coderoycc/ai-go-api/internal/shared/config"
 )
 
@@ -68,13 +67,13 @@ func main() {
 	}
 	log.Printf("Proveedor LLM activo: %s (Modelo: %s)", cfg.LLM.Provider, cfg.LLM.Model)
 
-	// 4. Inicializar Cliente HTTP Externo (API a la que llamará la tool)
-	prodClient := productClient.NewClient(cfg.Clients.ProductsURL, cfg.Clients.Timeout)
-
-	// 5. Inicializar Registro y Registrar la Tool
+	// 4. Inicializar Registro y Registrar Herramientas de Productos
 	registry := toolsApp.NewRegistry()
 
-	_ = registry.Register(toolsInfra.NewProductSearchTool(prodClient))
+	productTool := productsTools.NewProductTool(cfg.Clients.ProductsURL, cfg.Clients.Timeout)
+	if err := registry.Register(productTool); err != nil {
+		log.Fatalf("Error registrando herramientas de productos: %v", err)
+	}
 	log.Printf("Herramientas registradas: %d herramientas disponibles", len(registry.List()))
 
 	// 6. Ensamblar Componentes del Dominio y Aplicación

@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	apptools "github.com/coderoycc/ai-go-api/internal/application/tools"
 	"github.com/coderoycc/ai-go-api/internal/domain/models"
-	"github.com/coderoycc/ai-go-api/internal/domain/ports"
-	"github.com/coderoycc/ai-go-api/internal/domain/ports/mocks"
-	infratools "github.com/coderoycc/ai-go-api/internal/infrastructure/tools"
-	"github.com/stretchr/testify/mock"
+	productsTools "github.com/coderoycc/ai-go-api/internal/infrastructure/tools/products"
 )
 
 func TestMapMessagesToGemini(t *testing.T) {
@@ -101,19 +99,10 @@ func TestGemini_InteractiveInspection(t *testing.T) {
 		},
 	}
 
-	// Cargar herramientas reales registradas en la aplicación
-	mockProduct := new(mocks.MockProductClient)
-	mockProduct.On("SearchProducts", mock.Anything, mock.Anything).Return(&ports.ProductSearchResponse{
-		Total:  1,
-		Pagina: 1,
-		Limite: 10,
-		Productos: []ports.Product{
-			{Codigo: "p1", Nombre: "Laptop Gamer Pro", Precio: 1500.00, Categoria: "tecnologia", Stock: 10},
-		},
-	}, nil)
-
+	// Cargar herramientas registradas en la aplicación
 	toolRegistry := apptools.NewRegistry()
-	_ = toolRegistry.Register(infratools.NewProductSearchTool(mockProduct))
+	productTool := productsTools.NewProductTool("http://localhost", time.Second)
+	_ = toolRegistry.Register(productTool)
 	toolDefs := toolRegistry.Definitions()
 
 	// Construir ChatRequest exacto que se envía al modelo

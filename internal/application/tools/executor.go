@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/coderoycc/ai-go-api/internal/application/policies"
@@ -49,7 +50,13 @@ func (e *Executor) ExecuteToolCall(ctx context.Context, toolCall models.ToolCall
 		return "", fmt.Errorf("executor: error al ejecutar '%s': %w", toolCall.Name, err)
 	}
 
-	return result, nil
+	// 4. Serializar el objeto estructurado devuelto por la tool a JSON string para el LLM
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("executor: error al serializar resultado de '%s': %w", toolCall.Name, err)
+	}
+
+	return string(resultBytes), nil
 }
 
 // ExecuteAll ejecuta todas las ToolCalls retornadas por el LLM secuencialmente.

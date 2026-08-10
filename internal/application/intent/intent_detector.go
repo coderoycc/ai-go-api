@@ -125,9 +125,9 @@ func (d *Detector) initRules() {
 // Retorna cadena vacía si la intención no mapea directamente a una herramienta.
 func MapIntentToTool(intent models.IntentType) string {
 	mapping := map[models.IntentType]string{
-		models.IntentSearchProduct: "search_products",
-		models.IntentGetProduct:    "get_product",
-		models.IntentCheckStock:    "check_stock",
+		models.IntentSearchProduct: "product_advanced_search",
+		models.IntentGetProduct:    "product_advanced_search",
+		models.IntentCheckStock:    "product_stock_check",
 		models.IntentCreateSale:    "create_sale",
 		models.IntentGetSale:       "get_sale",
 		models.IntentCancelSale:    "cancel_sale",

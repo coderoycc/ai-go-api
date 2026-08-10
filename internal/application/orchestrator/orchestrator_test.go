@@ -2,6 +2,7 @@ package orchestrator_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -13,20 +14,41 @@ import (
 	"github.com/coderoycc/ai-go-api/internal/application/response"
 	apptools "github.com/coderoycc/ai-go-api/internal/application/tools"
 	"github.com/coderoycc/ai-go-api/internal/domain/models"
-	"github.com/coderoycc/ai-go-api/internal/domain/ports"
 	"github.com/coderoycc/ai-go-api/internal/domain/ports/mocks"
-	infratools "github.com/coderoycc/ai-go-api/internal/infrastructure/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory, mockProduct *mocks.MockProductClient) *orchestrator.Orchestrator {
+// MockTool implementa ports.Tool para pruebas unitarias de manera desacoplada.
+type MockTool struct {
+	mock.Mock
+	ToolName string
+}
+
+func (m *MockTool) Name() string                     { return m.ToolName }
+func (m *MockTool) Description() string              { return "Mock tool for testing" }
+func (m *MockTool) Method() string                   { return "POST" }
+func (m *MockTool) EndpointURL() string              { return "http://localhost/mock" }
+func (m *MockTool) Parameters() map[string]any       { return map[string]any{"type": "object"} }
+func (m *MockTool) ResponseSchema() map[string]any   { return map[string]any{"type": "object"} }
+func (m *MockTool) ExcludedFields() []string         { return nil }
+func (m *MockTool) MapResponse(rawBody []byte) (any, error) {
+	var data any
+	_ = json.Unmarshal(rawBody, &data)
+	return data, nil
+}
+func (m *MockTool) Execute(ctx context.Context, arguments string) (any, error) {
+	args := m.Called(ctx, arguments)
+	return args.Get(0), args.Error(1)
+}
+
+func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory, mockTool *MockTool) *orchestrator.Orchestrator {
 	// Reglas de política personalizadas para las pruebas
 	policyEngine := policies.NewEngine([]models.PolicyRule{
 		{
 			Name:           "allow_general_and_stock",
-			AllowedIntents: []models.IntentType{models.IntentGeneral, models.IntentCheckStock, models.IntentUnknown},
-			AllowedTools:   []string{"search_products"},
+			AllowedIntents: []models.IntentType{models.IntentGeneral, models.IntentCheckStock, models.IntentUnknown, models.IntentSearchProduct},
+			AllowedTools:   []string{"product_advanced_search", "product_stock_check", "search_products"},
 		},
 		{
 			Name:          "block_sales",
@@ -39,8 +61,8 @@ func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory,
 	contextManager := appctx.NewManager(mockMemory)
 
 	toolRegistry := apptools.NewRegistry()
-	if mockProduct != nil {
-		_ = toolRegistry.Register(infratools.NewProductSearchTool(mockProduct))
+	if mockTool != nil {
+		_ = toolRegistry.Register(mockTool)
 	}
 
 	toolExecutor := apptools.NewExecutor(toolRegistry, policyEngine)
@@ -114,33 +136,34 @@ func TestOrchestrator_CaseB_LLMDirectNaturalResponse(t *testing.T) {
 	mockLLM.AssertNumberOfCalls(t, "Chat", 1)
 }
 
-// Caso C: El LLM retorna Tool Calling (check_stock), el executor la procesa y re-envía la respuesta al LLM.
+// Caso C: El LLM retorna Tool Calling (product_advanced_search), el executor la procesa y re-envía la respuesta al LLM.
 func TestOrchestrator_CaseC_ToolCallingExecution(t *testing.T) {
 	mockLLM := new(mocks.MockLLM)
 	mockMemory := new(mocks.MockMemory)
-	mockProduct := new(mocks.MockProductClient)
+	mockTool := new(MockTool)
+	mockTool.ToolName = "product_advanced_search"
 
 	mockMemory.On("Load", mock.Anything, "session-tool").Return((*models.SessionContext)(nil), nil)
 	mockMemory.On("Save", mock.Anything, "session-tool", mock.Anything).Return(nil)
 
-	// Mock de la API externa
-	mockProduct.On("SearchProducts", mock.Anything, ports.SearchProductsRequest{Codigo: "PROD-99"}).Return(
-		&ports.ProductSearchResponse{
-			Total: 1,
-			Productos: []ports.Product{
-				{Codigo: "PROD-99", Nombre: "Laptop HP", Precio: 1200, Stock: 15},
+	// Mock de la tool ejecutando
+	mockTool.On("Execute", mock.Anything, `{"codigo": "PROD-99"}`).Return(
+		map[string]any{
+			"total": 1,
+			"productos": []any{
+				map[string]any{"codigo": "PROD-99", "nombre": "Laptop HP", "precio": 1200, "stock": 15},
 			},
 		},
 		nil,
 	)
 
-	// Primera llamada al LLM: Retorna ToolCall para search_products
+	// Primera llamada al LLM: Retorna ToolCall para product_advanced_search
 	firstLLMResp := models.ChatResponse{
 		Content: "",
 		ToolCalls: []models.ToolCall{
 			{
 				ID:        "call_abc123",
-				Name:      "search_products",
+				Name:      "product_advanced_search",
 				Arguments: `{"codigo": "PROD-99"}`,
 			},
 		},
@@ -156,48 +179,48 @@ func TestOrchestrator_CaseC_ToolCallingExecution(t *testing.T) {
 	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(firstLLMResp, nil).Once()
 	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(secondLLMResp, nil).Once()
 
-	orc := setupTestOrchestrator(mockLLM, mockMemory, mockProduct)
+	orc := setupTestOrchestrator(mockLLM, mockMemory, mockTool)
 
 	input := orchestrator.ChatInput{
 		SessionID: "session-tool",
 		Message:   "¿Cuántas unidades quedan del producto PROD-99?",
 	}
 
-	res := orc.HandleChat(context.Background(), input)
+	resResult := orc.HandleChat(context.Background(), input)
 
-	assert.Equal(t, response.ModeNatural, res.Mode)
-	assert.Contains(t, res.Message, "15 unidades disponibles")
-	assert.Equal(t, 50, res.TokensUsed) // 30 + 20 tokens acumulados
+	assert.Equal(t, response.ModeNatural, resResult.Mode)
+	assert.Contains(t, resResult.Message, "15 unidades disponibles")
+	assert.Equal(t, 50, resResult.TokensUsed) // 30 + 20 tokens acumulados
 
-	mockProduct.AssertCalled(t, "SearchProducts", mock.Anything, ports.SearchProductsRequest{Codigo: "PROD-99"})
+	mockTool.AssertCalled(t, "Execute", mock.Anything, `{"codigo": "PROD-99"}`)
 	mockLLM.AssertNumberOfCalls(t, "Chat", 2)
 }
 
-// Caso D: Fallo en la llamada a la herramienta o respuesta de error de los microservicios.
+// Caso D: Fallo en la llamada a la herramienta.
 func TestOrchestrator_CaseD_ToolExecutionFailure(t *testing.T) {
 	mockLLM := new(mocks.MockLLM)
 	mockMemory := new(mocks.MockMemory)
-	mockProduct := new(mocks.MockProductClient)
+	mockTool := new(MockTool)
+	mockTool.ToolName = "product_advanced_search"
 
 	mockMemory.On("Load", mock.Anything, "session-err").Return((*models.SessionContext)(nil), nil)
 	mockMemory.On("Save", mock.Anything, "session-err", mock.Anything).Return(nil)
 
-	// La API externa responde con error 404/500
-	mockProduct.On("SearchProducts", mock.Anything, mock.Anything).Return(nil, errors.New("api no disponible"))
+	// La tool responde con error
+	mockTool.On("Execute", mock.Anything, mock.Anything).Return(nil, errors.New("api no disponible"))
 
 	firstLLMResp := models.ChatResponse{
 		Content: "",
 		ToolCalls: []models.ToolCall{
 			{
 				ID:        "call_err_123",
-				Name:      "search_products",
+				Name:      "product_advanced_search",
 				Arguments: `{"codigo": "PROD-ERR"}`,
 			},
 		},
 		Usage: &models.TokenUsage{TotalTokens: 15},
 	}
 
-	// El LLM recibe el mensaje de error de la herramienta y redacta una respuesta amable
 	secondLLMResp := models.ChatResponse{
 		Content: "Lo siento, no pude verificar el stock en este momento debido a un problema con el sistema de inventario.",
 		Usage:   &models.TokenUsage{TotalTokens: 25},
@@ -206,7 +229,7 @@ func TestOrchestrator_CaseD_ToolExecutionFailure(t *testing.T) {
 	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(firstLLMResp, nil).Once()
 	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(secondLLMResp, nil).Once()
 
-	orc := setupTestOrchestrator(mockLLM, mockMemory, mockProduct)
+	orc := setupTestOrchestrator(mockLLM, mockMemory, mockTool)
 
 	input := orchestrator.ChatInput{
 		SessionID: "session-err",
@@ -217,5 +240,5 @@ func TestOrchestrator_CaseD_ToolExecutionFailure(t *testing.T) {
 
 	assert.Equal(t, response.ModeNatural, res.Mode)
 	assert.Contains(t, res.Message, "problema con el sistema de inventario")
-	mockProduct.AssertCalled(t, "SearchProducts", mock.Anything, mock.Anything)
+	mockTool.AssertCalled(t, "Execute", mock.Anything, mock.Anything)
 }

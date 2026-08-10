@@ -22,18 +22,32 @@ func NewRegistry() *Registry {
 	}
 }
 
-// Register registra una nueva herramienta en el registry.
-// Retorna error si ya existe una herramienta con el mismo nombre.
-func (r *Registry) Register(tool ports.Tool) error {
+// Register registra una nueva herramienta (ports.Tool) o un grupo de herramientas (ports.ToolGroup) en el registry.
+// Retorna error si ya existe una herramienta con el mismo nombre o si el tipo no es soportado.
+func (r *Registry) Register(item interface{}) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, exists := r.tools[tool.Name()]; exists {
-		return fmt.Errorf("tool_registry: herramienta '%s' ya registrada", tool.Name())
-	}
+	switch t := item.(type) {
+	case ports.Tool:
+		if _, exists := r.tools[t.Name()]; exists {
+			return fmt.Errorf("tool_registry: herramienta '%s' ya registrada", t.Name())
+		}
+		r.tools[t.Name()] = t
+		return nil
 
-	r.tools[tool.Name()] = tool
-	return nil
+	case ports.ToolGroup:
+		for _, tool := range t.Tools() {
+			if _, exists := r.tools[tool.Name()]; exists {
+				return fmt.Errorf("tool_registry: herramienta '%s' ya registrada", tool.Name())
+			}
+			r.tools[tool.Name()] = tool
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("tool_registry: tipo de ítem no soportado para registro (debe implementar ports.Tool o ports.ToolGroup)")
+	}
 }
 
 // Get obtiene una herramienta por su nombre.
