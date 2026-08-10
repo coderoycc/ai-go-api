@@ -3,8 +3,10 @@ package api
 import (
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/coderoycc/ai-go-api/internal/domain/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -64,6 +66,45 @@ func RecoveryMiddleware() gin.HandlerFunc {
 				})
 			}
 		}()
+		c.Next()
+	}
+}
+
+// AuthMiddleware valida la API Key del servicio (si está habilitada) y extrae
+// los headers HTTP de autorización del cliente: X-User-ID y X-User-Permission.
+//
+// Cuando AUTH_ENABLED=false: no se valida ninguna clave y se otorga el permiso
+// supremo (PermissionWrite) a todos, ya que el sistema opera en modo abierto.
+// Cuando AUTH_ENABLED=true: se valida la API Key y se extrae el permiso del header
+// X-User-Permission ("read" o "write"). Si el header está ausente, se asigna "read".
+func AuthMiddleware(apiKey string, enabled bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var userPerm models.Permission
+
+		if !enabled {
+			// Sin autenticación: permiso supremo para todos.
+			userPerm = models.PermissionWrite
+		} else {
+			reqKey := c.GetHeader("X-API-Key")
+			if reqKey == "" {
+				reqKey = c.GetHeader("Authorization")
+				reqKey = strings.TrimPrefix(reqKey, "Bearer ")
+			}
+			if reqKey != apiKey {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "API Key de servicio no válida o no provista"})
+				return
+			}
+			userPermStr := strings.ToLower(strings.TrimSpace(c.GetHeader("X-User-Permission")))
+			if userPermStr == "write" {
+				userPerm = models.PermissionWrite
+			} else {
+				userPerm = models.PermissionRead
+			}
+		}
+
+		c.Set("authenticated", !enabled || true)
+		c.Set("user_id", c.GetHeader("X-User-ID"))
+		c.Set("permission", userPerm)
 		c.Next()
 	}
 }

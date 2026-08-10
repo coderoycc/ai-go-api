@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/coderoycc/ai-go-api/internal/domain/models"
 )
 
 // AdvancedSearchTool implementa ports.Tool para la búsqueda avanzada de productos.
@@ -41,6 +44,10 @@ func (t *AdvancedSearchTool) Method() string {
 
 func (t *AdvancedSearchTool) EndpointURL() string {
 	return t.baseURL + "/productos/buscar"
+}
+
+func (t *AdvancedSearchTool) RequiredPermission() models.Permission {
+	return models.PermissionRead
 }
 
 func (t *AdvancedSearchTool) Parameters() map[string]any {
@@ -95,7 +102,18 @@ func (t *AdvancedSearchTool) MapResponse(rawBody []byte) (any, error) {
 	if err := json.Unmarshal(rawBody, &data); err != nil {
 		var rawList []any
 		if errList := json.Unmarshal(rawBody, &rawList); errList == nil {
-			return rawList, nil
+			cleanedList := make([]any, 0, len(rawList))
+			for _, item := range rawList {
+				if itemMap, ok := item.(map[string]any); ok {
+					for _, field := range t.ExcludedFields() {
+						delete(itemMap, field)
+					}
+					cleanedList = append(cleanedList, itemMap)
+				} else {
+					cleanedList = append(cleanedList, item)
+				}
+			}
+			return cleanedList, nil
 		}
 		return nil, fmt.Errorf("advanced_search: error al parsear respuesta JSON de la API: %w", err)
 	}
@@ -110,7 +128,7 @@ func (t *AdvancedSearchTool) MapResponse(rawBody []byte) (any, error) {
 func (t *AdvancedSearchTool) Execute(ctx context.Context, arguments string) (any, error) {
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(arguments), &raw); err != nil {
-		raw = map[string]any{"nombre": arguments}
+		raw = map[string]any{"nombre": strings.Trim(arguments, "\"")}
 	}
 
 	body, err := json.Marshal(raw)

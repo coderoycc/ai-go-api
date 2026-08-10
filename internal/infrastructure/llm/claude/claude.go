@@ -88,7 +88,14 @@ func mapMessagesToClaude(messages []models.Message) ([]anthropic.MessageParam, [
 	var claudeMessages []anthropic.MessageParam
 	var systemBlocks []anthropic.TextBlockParam
 
+	var toolResultBlocks []anthropic.ContentBlockParamUnion
+
 	for _, msg := range messages {
+		if msg.Role != models.RoleTool && len(toolResultBlocks) > 0 {
+			claudeMessages = append(claudeMessages, anthropic.NewUserMessage(toolResultBlocks...))
+			toolResultBlocks = nil
+		}
+
 		switch msg.Role {
 		case models.RoleSystem:
 			systemBlocks = append(systemBlocks, anthropic.TextBlockParam{
@@ -120,12 +127,12 @@ func mapMessagesToClaude(messages []models.Message) ([]anthropic.MessageParam, [
 
 		case models.RoleTool:
 			// Mapear resultado de herramienta a ToolResult de Claude
-			claudeMessages = append(claudeMessages,
-				anthropic.NewUserMessage(
-					anthropic.NewToolResultBlock(msg.ToolCallID, msg.Content, false),
-				),
-			)
+			toolResultBlocks = append(toolResultBlocks, anthropic.NewToolResultBlock(msg.ToolCallID, msg.Content, false))
 		}
+	}
+
+	if len(toolResultBlocks) > 0 {
+		claudeMessages = append(claudeMessages, anthropic.NewUserMessage(toolResultBlocks...))
 	}
 
 	return claudeMessages, systemBlocks

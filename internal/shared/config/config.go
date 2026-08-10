@@ -13,10 +13,17 @@ import (
 
 // Config agrupa toda la configuración centralizada del sistema.
 type Config struct {
-	Server ServerConfig
-	LLM    LLMConfig
-	Redis  RedisConfig
+	Server  ServerConfig
+	LLM     LLMConfig
+	Redis   RedisConfig
 	Clients ClientsConfig
+	Auth    AuthConfig
+}
+
+// AuthConfig define los parámetros para la verificación de autenticación/autorización.
+type AuthConfig struct {
+	APIKey  string
+	Enabled bool
 }
 
 // ServerConfig define los parámetros del servidor HTTP.
@@ -91,6 +98,10 @@ func Load() (*Config, error) {
 			ProductsURL: getEnv("PRODUCTS_SERVICE_URL", "http://localhost:8081"),
 			Timeout:     getEnvDuration("CLIENTS_TIMEOUT", 5*time.Second),
 		},
+		Auth: AuthConfig{
+			APIKey:  getEnv("AI_ENGINE_API_KEY", "default_secret_key_change_in_prod"),
+			Enabled: getEnvBool("AUTH_ENABLED", false),
+		},
 	}
 
 	// Asignar modelo por defecto si no se especificó según el proveedor
@@ -129,6 +140,11 @@ func (c *Config) Validate() error {
 	if c.LLM.Provider != "ollama" && c.LLM.APIKey == "" {
 		return fmt.Errorf("el proveedor LLM '%s' requiere una API Key configurada (usa LLM_API_KEY o %s)",
 			c.LLM.Provider, getProviderEnvName(c.LLM.Provider))
+	}
+
+	// Validar que la autenticación no use la clave secreta por defecto fuera de entorno dev
+	if c.Auth.Enabled && c.Auth.APIKey == "default_secret_key_change_in_prod" && c.Server.Env != "dev" {
+		return fmt.Errorf("autenticación habilitada en entorno '%s' requiere una AI_ENGINE_API_KEY explícita y segura", c.Server.Env)
 	}
 
 	return nil
@@ -210,6 +226,15 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	if val := os.Getenv(key); val != "" {
 		if d, err := time.ParseDuration(val); err == nil {
 			return d
+		}
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if val := os.Getenv(key); val != "" {
+		if b, err := strconv.ParseBool(val); err == nil {
+			return b
 		}
 	}
 	return defaultValue

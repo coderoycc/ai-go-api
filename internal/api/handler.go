@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/coderoycc/ai-go-api/internal/application/orchestrator"
+	"github.com/coderoycc/ai-go-api/internal/domain/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,9 +32,25 @@ func (h *ChatHandler) HandleChat(c *gin.Context) {
 		return
 	}
 
+	userPerm := models.PermissionRead
+	if permVal, exists := c.Get("permission"); exists {
+		if p, ok := permVal.(models.Permission); ok {
+			userPerm = p
+		}
+	}
+
+	userID := ""
+	if uidVal, exists := c.Get("user_id"); exists {
+		if uid, ok := uidVal.(string); ok {
+			userID = uid
+		}
+	}
+
 	input := orchestrator.ChatInput{
-		SessionID: req.SessionID,
-		Message:   req.Message,
+		SessionID:  req.SessionID,
+		Message:    req.Message,
+		UserID:     userID,
+		Permission: userPerm,
 	}
 
 	response := h.orchestrator.HandleChat(c.Request.Context(), input)

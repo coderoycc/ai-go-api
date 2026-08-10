@@ -34,8 +34,15 @@ type Tool interface {
 	MapResponse(rawBody []byte) (any, error)
 
 	// Execute ejecuta la herramienta con los argumentos proporcionados (JSON string).
-	// Retorna un objeto estructurado (any) con los datos de la respuesta.
+	// Internamente realiza la petición HTTP al microservicio, aplica MapResponse
+	// (que incluye ExcludedFields) y retorna los datos ya limpios y estructurados.
+	// El orquestador no necesita conocer los detalles de la petición ni del mapeo.
 	Execute(ctx context.Context, arguments string) (any, error)
+
+	// RequiredPermission declara el nivel de acceso mínimo que necesita el usuario
+	// para poder ejecutar esta herramienta.
+	// Retorna models.PermissionRead o models.PermissionWrite.
+	RequiredPermission() models.Permission
 }
 
 // ToolGroup agrupa múltiples endpoints/herramientas pertenecientes a un mismo dominio de API.

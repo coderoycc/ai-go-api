@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 
 	appctx "github.com/coderoycc/ai-go-api/internal/application/context"
@@ -31,12 +30,14 @@ Cuando necesites datos, usa las herramientas disponibles. No inventes informaci�
 
 // ChatInput encapsula la entrada de una solicitud de chat del usuario.
 type ChatInput struct {
-	SessionID string `json:"session_id"`
-	Message   string `json:"message"`
+	SessionID  string           `json:"session_id"`
+	Message    string           `json:"message"`
+	UserID     string           `json:"user_id,omitempty"`
+	Permission models.Permission `json:"permission,omitempty"`
 }
 
 // Orchestrator es el núcleo coordinador del AI Engine. Ensambla la secuencia completa:
-// Policy Engine → Intent Detector → Context Manager → Evaluador de Ruta → Tool Calling → Response Formatter.
+// Intent Detector → Context Manager → LLM Tool Calling → Policy Engine → Response Formatter.
 // Solo interactúa con interfaces (puertos), nunca con implementaciones concretas.
 type Orchestrator struct {
 	llm            ports.LLM
@@ -69,7 +70,16 @@ func NewOrchestrator(
 	}
 }
 
-// HandleChat procesa una solicitud de chat del usuario ejecutando el pipeline completo.
+// HandleChat procesa una solicitud de chat del usuario ejecutando el pipeline completo de 9 pasos:
+// 1. Recepción y permisos (ChatInput desde middleware).
+// 2. Definición del grupo de herramientas disponibles (toolRegistry).
+// 3. Validación de intención (IntentDetector). Si no es válida -> models.ErrInvalidIntent.
+// 4. Envío del mensaje al LLM con las herramientas disponibles.
+// 5. Recepción de la herramienta indicada por el LLM.
+// 6. Validación de permisos con PolicyEngine (read/write). Si no coincide -> models.ErrPermissionDenied.
+// 7. Petición a la herramienta seleccionada. Si no existe o falla -> models.ErrToolNotFound / models.ErrToolExecutionFailed.
+// 8. Mapeo de la respuesta desde la herramienta (con ExcludedFields ya aplicados).
+// 9. Envío de la respuesta API estructurada.
 func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response.APIResponse {
 	// 1. CONTEXT MANAGER — Cargar o crear sesión
 	session, err := o.contextManager.LoadOrCreate(ctx, input.SessionID)
@@ -78,71 +88,19 @@ func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response
 		return o.formatter.FormatError(input.SessionID, "Error interno al cargar la sesión.")
 	}
 
-	// Agregar mensaje del usuario al historial
 	o.contextManager.AddUserMessage(ctx, session, input.Message)
 
-	// 2. INTENT DETECTOR — Clasificar intención sin consumir tokens
+	// 2. VALIDAR LA INTENCIÓN DEL MENSAJE
 	detectedIntent, confident := o.intentDetector.DetectWithConfidence(input.Message)
+	if !confident {
+		log.Printf("[orchestrator] intención no válida o desconocida para mensaje: %s", input.Message)
+		o.saveSession(ctx, session)
+		return o.formatter.FormatError(input.SessionID, models.ErrInvalidIntent.Error())
+	}
 	o.contextManager.UpdateIntent(session, detectedIntent)
 
-	// 3. POLICY ENGINE — ¿La intención está permitida?
-	if confident {
-		policyResult := o.policyEngine.EvaluateIntent(models.PolicyEvalRequest{
-			SessionID: input.SessionID,
-			Intent:    detectedIntent,
-		})
-
-		if !policyResult.Allowed {
-			log.Printf("[orchestrator] intención bloqueada: %s — %s", detectedIntent, policyResult.Reason)
-			o.saveSession(ctx, session)
-			return o.formatter.FormatError(input.SessionID, "Lo siento, esa acción no está permitida: "+policyResult.Reason)
-		}
-	}
-
-	// 4. EVALUADOR DE RUTA — ¿Directa o vía LLM?
-	if confident && o.policyEngine.IsDirectResolvable(detectedIntent) {
-		return o.handleDirectRoute(ctx, input, session, detectedIntent)
-	}
-
-	// 5. RUTA VÍA LLM — Consultar al modelo de IA
-	return o.handleLLMRoute(ctx, input, session, detectedIntent)
-}
-
-// handleDirectRoute resuelve la intención directamente llamando a la herramienta
-// correspondiente sin consumir tokens del LLM.
-func (o *Orchestrator) handleDirectRoute(ctx context.Context, input ChatInput, session *models.SessionContext, detectedIntent models.IntentType) response.APIResponse {
-	toolName := intent.MapIntentToTool(detectedIntent)
-	if toolName == "" {
-		// Fallback a ruta LLM si no hay herramienta mapeada
-		return o.handleLLMRoute(ctx, input, session, detectedIntent)
-	}
-
-	tool, exists := o.toolRegistry.Get(toolName)
-	if !exists {
-		return o.handleLLMRoute(ctx, input, session, detectedIntent)
-	}
-
-	// Ejecutar herramienta directamente con el mensaje como argumento
-	result, err := tool.Execute(ctx, fmt.Sprintf(`{"query": "%s"}`, input.Message))
-	if err != nil {
-		log.Printf("[orchestrator] error en ruta directa: %v", err)
-		return o.handleLLMRoute(ctx, input, session, detectedIntent)
-	}
-
-	// Agregar respuesta al historial
-	resultBytes, _ := json.Marshal(result)
-	o.contextManager.AddAssistantMessage(ctx, session, string(resultBytes))
-	o.saveSession(ctx, session)
-
-	return o.formatter.FormatRaw(input.SessionID, string(detectedIntent), result)
-}
-
-// handleLLMRoute consulta al LLM con el contexto conversacional y herramientas disponibles.
-// Implementa el loop de Tool Calling si el LLM solicita ejecutar herramientas.
-func (o *Orchestrator) handleLLMRoute(ctx context.Context, input ChatInput, session *models.SessionContext, detectedIntent models.IntentType) response.APIResponse {
-	// Construir mensajes con contexto filtrado por intención
+	// 3. EJECUTAR EL MENSAJE CON TODAS LAS HERRAMIENTAS VÍA LLM
 	messages := o.contextManager.BuildContextMessages(session, systemPrompt, detectedIntent)
-
 	req := models.ChatRequest{
 		SessionID:   input.SessionID,
 		Messages:    messages,
@@ -151,51 +109,57 @@ func (o *Orchestrator) handleLLMRoute(ctx context.Context, input ChatInput, sess
 		MaxTokens:   1024,
 	}
 
-	totalTokens := 0
-
-	// Loop de Tool Calling (el LLM puede solicitar múltiples herramientas)
-	for i := 0; i < maxToolCallIterations; i++ {
-		resp, err := o.llm.Chat(ctx, req)
-		if err != nil {
-			log.Printf("[orchestrator] error en LLM: %v", err)
-			o.saveSession(ctx, session)
-			return o.formatter.FormatError(input.SessionID, "Error al comunicarse con el asistente de IA.")
-		}
-
-		if resp.Usage != nil {
-			totalTokens += resp.Usage.TotalTokens
-		}
-
-		// Si no hay Tool Calls, tenemos la respuesta final
-		if len(resp.ToolCalls) == 0 {
-			o.contextManager.AddAssistantMessage(ctx, session, resp.Content)
-			o.saveSession(ctx, session)
-			return o.formatter.FormatNatural(input.SessionID, resp.Content, string(detectedIntent), totalTokens)
-		}
-
-		// Ejecutar las herramientas solicitadas por el LLM
-		// Agregar el mensaje del asistente con los ToolCalls al request
-		req.Messages = append(req.Messages, models.Message{
-			Role:      models.RoleAssistant,
-			Content:   resp.Content,
-			ToolCalls: resp.ToolCalls,
-		})
-
-		toolResults, err := o.toolExecutor.ExecuteAll(ctx, resp.ToolCalls, input.SessionID)
-		if err != nil {
-			log.Printf("[orchestrator] error ejecutando tools: %v", err)
-			o.saveSession(ctx, session)
-			return o.formatter.FormatError(input.SessionID, "Error al ejecutar las operaciones solicitadas.")
-		}
-
-		// Agregar resultados de herramientas al request para la siguiente iteración
-		req.Messages = append(req.Messages, toolResults...)
+	resp, err := o.llm.Chat(ctx, req)
+	if err != nil {
+		log.Printf("[orchestrator] error al consultar LLM: %v", err)
+		o.saveSession(ctx, session)
+		return o.formatter.FormatError(input.SessionID, "Error al comunicarse con el asistente de IA.")
 	}
 
-	// Si llegamos al límite de iteraciones, retornar lo que tengamos
-	log.Printf("[orchestrator] límite de iteraciones de Tool Calling alcanzado para sesión %s", input.SessionID)
+	totalTokens := 0
+	if resp.Usage != nil {
+		totalTokens = resp.Usage.TotalTokens
+	}
+
+	// 4. SI EL LLM NO REQUIERE HERRAMIENTAS, DEVOLVER RESPUESTA NATURAL
+	if len(resp.ToolCalls) == 0 {
+		o.contextManager.AddAssistantMessage(ctx, session, resp.Content)
+		o.saveSession(ctx, session)
+		return o.formatter.FormatNatural(input.SessionID, resp.Content, string(detectedIntent), totalTokens)
+	}
+
+	// 5. RECEPCIÓN DE LA HERRAMIENTA INDICADA POR EL LLM
+	toolCall := resp.ToolCalls[0]
+
+	// 6. VERIFICAR SI EL PERMISO DEL USUARIO (read/write) COINCIDE CON EL DE LA TOOL
+	policyResult := o.policyEngine.EvaluateTool(toolCall.Name, input.Permission)
+	if !policyResult.Allowed {
+		log.Printf("[orchestrator] permiso insuficiente para herramienta %s: %s", toolCall.Name, policyResult.Reason)
+		o.saveSession(ctx, session)
+		return o.formatter.FormatError(input.SessionID, models.ErrPermissionDenied.Error())
+	}
+
+	// 7. PETICIÓN A LA HERRAMIENTA SELECCIONADA
+	tool, exists := o.toolRegistry.Get(toolCall.Name)
+	if !exists {
+		log.Printf("[orchestrator] herramienta no encontrada: %s", toolCall.Name)
+		o.saveSession(ctx, session)
+		return o.formatter.FormatError(input.SessionID, models.ErrToolNotFound.Error())
+	}
+
+	// 8. MAPEO DE RESPUESTA DESDE LA TOOL (Aplica MapResponse y ExcludedFields)
+	result, err := tool.Execute(ctx, toolCall.Arguments)
+	if err != nil {
+		log.Printf("[orchestrator] error ejecutando herramienta %s: %v", toolCall.Name, err)
+		o.saveSession(ctx, session)
+		return o.formatter.FormatError(input.SessionID, models.ErrToolExecutionFailed.Error())
+	}
+
+	// 9. PERSISTIR EN REDIS Y RETORNAR RESPUESTA API ESTRUCTURADA
+	resultBytes, _ := json.Marshal(result)
+	o.contextManager.AddAssistantMessage(ctx, session, string(resultBytes))
 	o.saveSession(ctx, session)
-	return o.formatter.FormatError(input.SessionID, "Se alcanzó el límite de procesamiento. Por favor, intenta con una consulta más simple.")
+	return o.formatter.FormatRaw(input.SessionID, string(detectedIntent), result)
 }
 
 // saveSession persiste la sesión de forma segura (loguea el error sin propagarlo).
