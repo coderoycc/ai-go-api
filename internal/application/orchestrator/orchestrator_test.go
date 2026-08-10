@@ -2,7 +2,6 @@ package orchestrator_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -33,11 +32,7 @@ func (m *MockTool) EndpointURL() string              { return "http://localhost/
 func (m *MockTool) Parameters() map[string]any       { return map[string]any{"type": "object"} }
 func (m *MockTool) ResponseSchema() map[string]any   { return map[string]any{"type": "object"} }
 func (m *MockTool) ExcludedFields() []string         { return nil }
-func (m *MockTool) MapResponse(rawBody []byte) (any, error) {
-	var data any
-	_ = json.Unmarshal(rawBody, &data)
-	return data, nil
-}
+func (m *MockTool) FallbackArgKey() string           { return "" }
 func (m *MockTool) RequiredPermission() models.Permission {
 	if m.ReqPermission != "" {
 		return m.ReqPermission

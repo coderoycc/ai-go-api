@@ -29,20 +29,16 @@ type Tool interface {
 	// ExcludedFields retorna la lista de campos que deben ser excluidos del JSON de respuesta de la API.
 	ExcludedFields() []string
 
-	// MapResponse toma el cuerpo crudo de la respuesta HTTP, lo parsea, aplica exclusiones
-	// y retorna un objeto estructurado (map/slice) listo para ser usado por el sistema o frontend.
-	MapResponse(rawBody []byte) (any, error)
+	// RequiredPermission declara el nivel de acceso mínimo que necesita el usuario
+	// para poder ejecutar esta herramienta (models.PermissionRead o models.PermissionWrite).
+	RequiredPermission() models.Permission
+
+	// FallbackArgKey retorna la clave JSON a utilizar cuando el LLM envía un argumento plano (string) en vez de un objeto JSON.
+	FallbackArgKey() string
 
 	// Execute ejecuta la herramienta con los argumentos proporcionados (JSON string).
-	// Internamente realiza la petición HTTP al microservicio, aplica MapResponse
-	// (que incluye ExcludedFields) y retorna los datos ya limpios y estructurados.
-	// El orquestador no necesita conocer los detalles de la petición ni del mapeo.
+	// La implementación base en infraestructura realiza la petición HTTP y aplica ExcludedFields automáticamente.
 	Execute(ctx context.Context, arguments string) (any, error)
-
-	// RequiredPermission declara el nivel de acceso mínimo que necesita el usuario
-	// para poder ejecutar esta herramienta.
-	// Retorna models.PermissionRead o models.PermissionWrite.
-	RequiredPermission() models.Permission
 }
 
 // ToolGroup agrupa múltiples endpoints/herramientas pertenecientes a un mismo dominio de API.

@@ -147,7 +147,7 @@ func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response
 		return o.formatter.FormatError(input.SessionID, models.ErrToolNotFound.Error())
 	}
 
-	// 8. MAPEO DE RESPUESTA DESDE LA TOOL (Aplica MapResponse y ExcludedFields)
+	// 8. EJECUCIÓN DE LA HERRAMIENTA (Aplica HTTP y ExcludedFields automáticamente)
 	result, err := tool.Execute(ctx, toolCall.Arguments)
 	if err != nil {
 		log.Printf("[orchestrator] error ejecutando herramienta %s: %v", toolCall.Name, err)
