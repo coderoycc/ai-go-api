@@ -8,7 +8,7 @@ import (
 )
 
 // SetupRouter configura el enrutador Gin con sus middlewares y rutas.
-func SetupRouter(orc *orchestrator.Orchestrator) *gin.Engine {
+func SetupRouter(orc *orchestrator.Orchestrator, authAPIKey string, authEnabled bool) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 
@@ -30,6 +30,7 @@ func SetupRouter(orc *orchestrator.Orchestrator) *gin.Engine {
 
 	// Grupo API v1
 	v1 := router.Group("/api/v1")
+	v1.Use(AuthMiddleware(authAPIKey, authEnabled))
 	{
 		v1.POST("/chat", handler.HandleChat)
 	}

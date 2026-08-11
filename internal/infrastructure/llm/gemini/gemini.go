@@ -71,8 +71,8 @@ func (a *Adapter) Chat(ctx context.Context, req models.ChatRequest) (models.Chat
 	return response, nil
 }
 
-// mapMessagesToGemini convierte mensajes del dominio al formato de contenido de Gemini.
-// Separa el mensaje de sistema como SystemInstruction del resto de contenidos.
+// mapMessagesToGemini convierte el historial de mensajes conversacionales cargados desde Redis
+// al formato de contenido nativo de Gemini (SystemInstruction, user, model).
 func mapMessagesToGemini(messages []models.Message) ([]*genai.Content, *genai.Content) {
 	var contents []*genai.Content
 	var systemInstruction *genai.Content
@@ -82,54 +82,24 @@ func mapMessagesToGemini(messages []models.Message) ([]*genai.Content, *genai.Co
 		case models.RoleSystem:
 			systemInstruction = &genai.Content{
 				Parts: []*genai.Part{{Text: msg.Content}},
-				Role:  "user",
 			}
 
 		case models.RoleUser:
 			contents = append(contents, &genai.Content{
-				Parts: []*genai.Part{{Text: msg.Content}},
 				Role:  "user",
+				Parts: []*genai.Part{{Text: msg.Content}},
 			})
 
 		case models.RoleAssistant:
-			content := &genai.Content{Role: "model"}
-			if msg.Content != "" {
-				content.Parts = append(content.Parts, &genai.Part{Text: msg.Content})
-			}
-			// Mapear ToolCalls del asistente a FunctionCall de Gemini
-			for _, tc := range msg.ToolCalls {
-				var args map[string]any
-				_ = json.Unmarshal([]byte(tc.Arguments), &args)
-				fcPart := &genai.Part{
-					FunctionCall: &genai.FunctionCall{
-						Name: tc.Name,
-						Args: args,
-					},
-				}
-				if len(tc.ThoughtSignature) > 0 {
-					fcPart.ThoughtSignature = tc.ThoughtSignature
-				}
-				content.Parts = append(content.Parts, fcPart)
-			}
-			contents = append(contents, content)
+			contents = append(contents, &genai.Content{
+				Role:  "model",
+				Parts: []*genai.Part{{Text: msg.Content}},
+			})
 
 		case models.RoleTool:
-			// Mapear resultado de herramienta a FunctionResponse de Gemini
-			var result map[string]any
-			_ = json.Unmarshal([]byte(msg.Content), &result)
-			if result == nil {
-				result = map[string]any{"result": msg.Content}
-			}
 			contents = append(contents, &genai.Content{
-				Role: "user",
-				Parts: []*genai.Part{
-					{
-						FunctionResponse: &genai.FunctionResponse{
-							Name:     msg.ToolCallID,
-							Response: result,
-						},
-					},
-				},
+				Role:  "user",
+				Parts: []*genai.Part{{Text: msg.Content}},
 			})
 		}
 	}

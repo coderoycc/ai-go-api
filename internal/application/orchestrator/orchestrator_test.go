@@ -2,7 +2,6 @@ package orchestrator_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -22,7 +21,8 @@ import (
 // MockTool implementa ports.Tool para pruebas unitarias de manera desacoplada.
 type MockTool struct {
 	mock.Mock
-	ToolName string
+	ToolName      string
+	ReqPermission models.Permission
 }
 
 func (m *MockTool) Name() string                     { return m.ToolName }
@@ -32,10 +32,12 @@ func (m *MockTool) EndpointURL() string              { return "http://localhost/
 func (m *MockTool) Parameters() map[string]any       { return map[string]any{"type": "object"} }
 func (m *MockTool) ResponseSchema() map[string]any   { return map[string]any{"type": "object"} }
 func (m *MockTool) ExcludedFields() []string         { return nil }
-func (m *MockTool) MapResponse(rawBody []byte) (any, error) {
-	var data any
-	_ = json.Unmarshal(rawBody, &data)
-	return data, nil
+func (m *MockTool) FallbackArgKey() string           { return "" }
+func (m *MockTool) RequiredPermission() models.Permission {
+	if m.ReqPermission != "" {
+		return m.ReqPermission
+	}
+	return models.PermissionRead
 }
 func (m *MockTool) Execute(ctx context.Context, arguments string) (any, error) {
 	args := m.Called(ctx, arguments)
@@ -43,20 +45,6 @@ func (m *MockTool) Execute(ctx context.Context, arguments string) (any, error) {
 }
 
 func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory, mockTool *MockTool) *orchestrator.Orchestrator {
-	// Reglas de política personalizadas para las pruebas
-	policyEngine := policies.NewEngine([]models.PolicyRule{
-		{
-			Name:           "allow_general_and_stock",
-			AllowedIntents: []models.IntentType{models.IntentGeneral, models.IntentCheckStock, models.IntentUnknown, models.IntentSearchProduct},
-			AllowedTools:   []string{"product_advanced_search", "product_stock_check", "search_products"},
-		},
-		{
-			Name:          "block_sales",
-			DeniedIntents: []models.IntentType{models.IntentCreateSale, models.IntentCancelSale},
-			DeniedTools:   []string{"cancel_sale"},
-		},
-	})
-
 	intentDetector := intent.NewDetector()
 	contextManager := appctx.NewManager(mockMemory)
 
@@ -65,6 +53,7 @@ func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory,
 		_ = toolRegistry.Register(mockTool)
 	}
 
+	policyEngine := policies.NewEngine(toolRegistry)
 	toolExecutor := apptools.NewExecutor(toolRegistry, policyEngine)
 	formatter := response.NewFormatter()
 
@@ -79,29 +68,40 @@ func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory,
 	)
 }
 
-// Caso A: La política bloquea la intención antes de llamar al LLM (no consume tokens).
-func TestOrchestrator_CaseA_PolicyBlocksIntent(t *testing.T) {
+// Caso A: La política (PolicyEngine) bloquea la ejecución de una herramienta si el usuario carece de permisos.
+func TestOrchestrator_CaseA_PolicyBlocksToolExecution(t *testing.T) {
 	mockLLM := new(mocks.MockLLM)
 	mockMemory := new(mocks.MockMemory)
+	mockTool := new(MockTool)
+	mockTool.ToolName = "cancel_sale"
+	mockTool.ReqPermission = models.PermissionWrite
 
-	// Mock de memoria retorna nil (sesión nueva) y se puede guardar
 	mockMemory.On("Load", mock.Anything, "session-block").Return((*models.SessionContext)(nil), nil)
 	mockMemory.On("Save", mock.Anything, "session-block", mock.Anything).Return(nil)
 
-	orc := setupTestOrchestrator(mockLLM, mockMemory, nil)
+	// El LLM solicita ejecutar cancel_sale
+	llmResp := models.ChatResponse{
+		Content: "",
+		ToolCalls: []models.ToolCall{
+			{ID: "call_cancel_1", Name: "cancel_sale", Arguments: `{"sale_id": "123"}`},
+		},
+		Usage: &models.TokenUsage{TotalTokens: 10},
+	}
 
-	// Mensaje que gatilla una intención bloqueada (IntentCancelSale)
+	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(llmResp, nil).Once()
+
+	orc := setupTestOrchestrator(mockLLM, mockMemory, mockTool)
+
 	input := orchestrator.ChatInput{
-		SessionID: "session-block",
-		Message:   "Quiero cancelar venta #123",
+		SessionID:  "session-block",
+		Message:    "Quiero cancelar la venta #123",
+		Permission: models.PermissionRead, // solo lectura, pero cancel_sale requiere write
 	}
 
 	res := orc.HandleChat(context.Background(), input)
 
-	assert.Contains(t, res.Message, "no está permitida")
-	assert.Equal(t, 0, res.TokensUsed)
-	// Verificar que el LLM NUNCA fue llamado
-	mockLLM.AssertNotCalled(t, "Chat", mock.Anything, mock.Anything)
+	assert.Contains(t, res.Message, models.ErrPermissionDenied.Error())
+	mockLLM.AssertNumberOfCalls(t, "Chat", 1)
 }
 
 // Caso B: El LLM responde directamente en lenguaje natural sin requerir herramientas.
@@ -136,7 +136,7 @@ func TestOrchestrator_CaseB_LLMDirectNaturalResponse(t *testing.T) {
 	mockLLM.AssertNumberOfCalls(t, "Chat", 1)
 }
 
-// Caso C: El LLM retorna Tool Calling (product_advanced_search), el executor la procesa y re-envía la respuesta al LLM.
+// Caso C: El LLM retorna Tool Calling (product_advanced_search), se valida permiso, se ejecuta la herramienta y se responde con datos mapeados.
 func TestOrchestrator_CaseC_ToolCallingExecution(t *testing.T) {
 	mockLLM := new(mocks.MockLLM)
 	mockMemory := new(mocks.MockMemory)
@@ -157,8 +157,7 @@ func TestOrchestrator_CaseC_ToolCallingExecution(t *testing.T) {
 		nil,
 	)
 
-	// Primera llamada al LLM: Retorna ToolCall para product_advanced_search
-	firstLLMResp := models.ChatResponse{
+	llmResp := models.ChatResponse{
 		Content: "",
 		ToolCalls: []models.ToolCall{
 			{
@@ -170,30 +169,22 @@ func TestOrchestrator_CaseC_ToolCallingExecution(t *testing.T) {
 		Usage: &models.TokenUsage{TotalTokens: 30},
 	}
 
-	// Segunda llamada al LLM (después de ejecutar el tool): Retorna respuesta final
-	secondLLMResp := models.ChatResponse{
-		Content: "El producto PROD-99 cuenta con 15 unidades disponibles en inventario.",
-		Usage:   &models.TokenUsage{TotalTokens: 20},
-	}
-
-	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(firstLLMResp, nil).Once()
-	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(secondLLMResp, nil).Once()
+	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(llmResp, nil).Once()
 
 	orc := setupTestOrchestrator(mockLLM, mockMemory, mockTool)
 
 	input := orchestrator.ChatInput{
-		SessionID: "session-tool",
-		Message:   "¿Cuántas unidades quedan del producto PROD-99?",
+		SessionID:  "session-tool",
+		Message:    "¿Cuántas unidades quedan del producto PROD-99?",
+		Permission: models.PermissionRead,
 	}
 
 	resResult := orc.HandleChat(context.Background(), input)
 
-	assert.Equal(t, response.ModeNatural, resResult.Mode)
-	assert.Contains(t, resResult.Message, "15 unidades disponibles")
-	assert.Equal(t, 50, resResult.TokensUsed) // 30 + 20 tokens acumulados
-
+	assert.Equal(t, response.ModeRaw, resResult.Mode)
+	assert.NotNil(t, resResult.Data)
 	mockTool.AssertCalled(t, "Execute", mock.Anything, `{"codigo": "PROD-99"}`)
-	mockLLM.AssertNumberOfCalls(t, "Chat", 2)
+	mockLLM.AssertNumberOfCalls(t, "Chat", 1)
 }
 
 // Caso D: Fallo en la llamada a la herramienta.
@@ -209,7 +200,7 @@ func TestOrchestrator_CaseD_ToolExecutionFailure(t *testing.T) {
 	// La tool responde con error
 	mockTool.On("Execute", mock.Anything, mock.Anything).Return(nil, errors.New("api no disponible"))
 
-	firstLLMResp := models.ChatResponse{
+	llmResp := models.ChatResponse{
 		Content: "",
 		ToolCalls: []models.ToolCall{
 			{
@@ -221,24 +212,18 @@ func TestOrchestrator_CaseD_ToolExecutionFailure(t *testing.T) {
 		Usage: &models.TokenUsage{TotalTokens: 15},
 	}
 
-	secondLLMResp := models.ChatResponse{
-		Content: "Lo siento, no pude verificar el stock en este momento debido a un problema con el sistema de inventario.",
-		Usage:   &models.TokenUsage{TotalTokens: 25},
-	}
-
-	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(firstLLMResp, nil).Once()
-	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(secondLLMResp, nil).Once()
+	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(llmResp, nil).Once()
 
 	orc := setupTestOrchestrator(mockLLM, mockMemory, mockTool)
 
 	input := orchestrator.ChatInput{
-		SessionID: "session-err",
-		Message:   "Asísteme por favor verificando con tus herramientas la disponibilidad del producto PROD-ERR",
+		SessionID:  "session-err",
+		Message:    "Asísteme por favor verificando con tus herramientas la disponibilidad del producto PROD-ERR",
+		Permission: models.PermissionRead,
 	}
 
 	res := orc.HandleChat(context.Background(), input)
 
-	assert.Equal(t, response.ModeNatural, res.Mode)
-	assert.Contains(t, res.Message, "problema con el sistema de inventario")
+	assert.Contains(t, res.Message, models.ErrToolExecutionFailed.Error())
 	mockTool.AssertCalled(t, "Execute", mock.Anything, mock.Anything)
 }

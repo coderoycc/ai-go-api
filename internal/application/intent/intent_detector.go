@@ -13,9 +13,8 @@ type patternRule struct {
 	intent  models.IntentType
 }
 
-// Detector clasifica la intención del usuario usando reglas deterministas (regex)
-// para evitar llamadas al LLM cuando la intención es obvia. Solo recurre al LLM
-// si no puede clasificar con certeza.
+// Detector clasifica la intención del usuario usando patrones deterministas (regex)
+// para etiquetar la sesión y filtrar el contexto de entidades que se inyecta al prompt del LLM.
 type Detector struct {
 	rules []patternRule
 }
@@ -31,6 +30,7 @@ func NewDetector() *Detector {
 // Usa evaluación de patrones regex sin consumir tokens del LLM.
 func (d *Detector) Detect(message string) models.IntentType {
 	normalized := strings.ToLower(strings.TrimSpace(message))
+	normalized = strings.Trim(normalized, "¿?¡!")
 
 	for _, rule := range d.rules {
 		if rule.pattern.MatchString(normalized) {
@@ -41,11 +41,11 @@ func (d *Detector) Detect(message string) models.IntentType {
 	return models.IntentUnknown
 }
 
-// DetectWithConfidence retorna la intención y si fue detectada con alta confianza.
-// Si confidence es false, el orquestador debería delegar al LLM.
+// DetectWithConfidence retorna la intención y si fue detectada con validez.
+// Retorna false solo si la intención es completamente desconocida (models.IntentUnknown).
 func (d *Detector) DetectWithConfidence(message string) (models.IntentType, bool) {
 	intent := d.Detect(message)
-	confident := intent != models.IntentUnknown && intent != models.IntentGeneral
+	confident := intent != models.IntentUnknown
 	return intent, confident
 }
 
@@ -79,7 +79,7 @@ func (d *Detector) initRules() {
 
 		// Verificación de stock
 		{
-			pattern: regexp.MustCompile(`(stock|inventario|disponibilidad|existencia|cuántos?|cuantos?|hay)\s.*(disponible|quedan|tiene|product)`),
+			pattern: regexp.MustCompile(`(stock|inventario|disponibilidad|existencia|cuántos?|cuántas?|cuantos?|cuantas?|unidades|hay)\s.*(disponible|quedan|tiene|product|producto)`),
 			intent:  models.IntentCheckStock,
 		},
 		{
@@ -121,16 +121,3 @@ func (d *Detector) initRules() {
 	}
 }
 
-// MapIntentToTool retorna el nombre de la herramienta asociada a una intención.
-// Retorna cadena vacía si la intención no mapea directamente a una herramienta.
-func MapIntentToTool(intent models.IntentType) string {
-	mapping := map[models.IntentType]string{
-		models.IntentSearchProduct: "product_advanced_search",
-		models.IntentGetProduct:    "product_advanced_search",
-		models.IntentCheckStock:    "product_stock_check",
-		models.IntentCreateSale:    "create_sale",
-		models.IntentGetSale:       "get_sale",
-		models.IntentCancelSale:    "cancel_sale",
-	}
-	return mapping[intent]
-}

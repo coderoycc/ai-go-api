@@ -1,30 +1,25 @@
 package products
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"time"
+
+	"github.com/coderoycc/ai-go-api/internal/domain/models"
+	toolsinfra "github.com/coderoycc/ai-go-api/internal/infrastructure/tools"
 )
 
 // AdvancedSearchTool implementa ports.Tool para la búsqueda avanzada de productos.
+// Embebe BaseHTTPTool, lo que le permite heredar Execute automáticamente
+// y garantiza la exclusión de campos definidos en ExcludedFields sin código repetido.
 type AdvancedSearchTool struct {
-	baseURL    string
-	httpClient *http.Client
+	toolsinfra.BaseHTTPTool
+	baseURL string
 }
 
-// NewAdvancedSearchTool crea una nueva instancia de la tool de búsqueda avanzada.
+// NewAdvancedSearchTool crea una nueva instancia de la herramienta de búsqueda avanzada.
 func NewAdvancedSearchTool(baseURL string, timeout time.Duration) *AdvancedSearchTool {
-	if timeout == 0 {
-		timeout = 10 * time.Second
-	}
-	return &AdvancedSearchTool{
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: timeout},
-	}
+	t := &AdvancedSearchTool{baseURL: baseURL}
+	t.BaseHTTPTool = toolsinfra.NewBaseHTTPTool(t, timeout)
+	return t
 }
 
 func (t *AdvancedSearchTool) Name() string {
@@ -41,6 +36,14 @@ func (t *AdvancedSearchTool) Method() string {
 
 func (t *AdvancedSearchTool) EndpointURL() string {
 	return t.baseURL + "/productos/buscar"
+}
+
+func (t *AdvancedSearchTool) RequiredPermission() models.Permission {
+	return models.PermissionRead
+}
+
+func (t *AdvancedSearchTool) FallbackArgKey() string {
+	return "nombre"
 }
 
 func (t *AdvancedSearchTool) Parameters() map[string]any {
@@ -87,58 +90,4 @@ func (t *AdvancedSearchTool) ResponseSchema() map[string]any {
 
 func (t *AdvancedSearchTool) ExcludedFields() []string {
 	return []string{"limite", "pagina", "filtros_aplicados"}
-}
-
-// MapResponse parsea el body crudo, excluye campos no deseados y retorna un objeto estructurado.
-func (t *AdvancedSearchTool) MapResponse(rawBody []byte) (any, error) {
-	var data map[string]any
-	if err := json.Unmarshal(rawBody, &data); err != nil {
-		var rawList []any
-		if errList := json.Unmarshal(rawBody, &rawList); errList == nil {
-			return rawList, nil
-		}
-		return nil, fmt.Errorf("advanced_search: error al parsear respuesta JSON de la API: %w", err)
-	}
-
-	for _, field := range t.ExcludedFields() {
-		delete(data, field)
-	}
-
-	return data, nil
-}
-
-func (t *AdvancedSearchTool) Execute(ctx context.Context, arguments string) (any, error) {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(arguments), &raw); err != nil {
-		raw = map[string]any{"nombre": arguments}
-	}
-
-	body, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("advanced_search: error serializando argumentos: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, t.Method(), t.EndpointURL(), bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("advanced_search: error creando request HTTP: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	resp, err := t.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("advanced_search: error en petición HTTP: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("advanced_search: error leyendo respuesta: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("advanced_search: error HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return t.MapResponse(respBody)
 }

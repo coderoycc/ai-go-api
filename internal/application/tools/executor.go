@@ -27,12 +27,9 @@ func NewExecutor(registry ports.ToolRegistry, policyEngine *policies.Engine) *Ex
 
 // ExecuteToolCall ejecuta una sola llamada a herramienta después de validar la política.
 // Retorna el resultado como string para inyectar de vuelta al LLM como mensaje tool.
-func (e *Executor) ExecuteToolCall(ctx context.Context, toolCall models.ToolCall, sessionID string) (string, error) {
+func (e *Executor) ExecuteToolCall(ctx context.Context, toolCall models.ToolCall, sessionID string, userPerm models.Permission) (string, error) {
 	// 1. Validar con PolicyEngine antes de ejecutar
-	policyResult := e.policyEngine.EvaluateTool(models.PolicyEvalRequest{
-		SessionID: sessionID,
-		ToolName:  toolCall.Name,
-	})
+	policyResult := e.policyEngine.EvaluateTool(toolCall.Name, userPerm)
 
 	if !policyResult.Allowed {
 		return "", fmt.Errorf("executor: herramienta '%s' bloqueada — %s", toolCall.Name, policyResult.Reason)
@@ -61,11 +58,11 @@ func (e *Executor) ExecuteToolCall(ctx context.Context, toolCall models.ToolCall
 
 // ExecuteAll ejecuta todas las ToolCalls retornadas por el LLM secuencialmente.
 // Retorna los mensajes de resultado para inyectar de vuelta a la conversación.
-func (e *Executor) ExecuteAll(ctx context.Context, toolCalls []models.ToolCall, sessionID string) ([]models.Message, error) {
+func (e *Executor) ExecuteAll(ctx context.Context, toolCalls []models.ToolCall, sessionID string, userPerm models.Permission) ([]models.Message, error) {
 	results := make([]models.Message, 0, len(toolCalls))
 
 	for _, tc := range toolCalls {
-		result, err := e.ExecuteToolCall(ctx, tc, sessionID)
+		result, err := e.ExecuteToolCall(ctx, tc, sessionID, userPerm)
 		if err != nil {
 			// En caso de error, inyectar el error como resultado para que el LLM lo maneje
 			results = append(results, models.Message{

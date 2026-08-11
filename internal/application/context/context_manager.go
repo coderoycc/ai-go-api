@@ -100,8 +100,10 @@ func (m *Manager) BuildContextMessages(session *models.SessionContext, systemPro
 		Content: fullSystem,
 	})
 
-	// 3. Historial de conversación
-	messages = append(messages, session.History...)
+	// 3. Historial de conversación (copia independiente para evitar aliasing del arreglo subyacente)
+	historyCopy := make([]models.Message, len(session.History))
+	copy(historyCopy, session.History)
+	messages = append(messages, historyCopy...)
 
 	return messages
 }

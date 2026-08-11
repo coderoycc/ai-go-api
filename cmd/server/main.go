@@ -77,7 +77,7 @@ func main() {
 	log.Printf("Herramientas registradas: %d herramientas disponibles", len(registry.List()))
 
 	// 6. Ensamblar Componentes del Dominio y Aplicación
-	policyEngine := policies.DefaultEngine()
+	policyEngine := policies.NewEngine(registry)
 	toolExecutor := toolsApp.NewExecutor(registry, policyEngine)
 	intentDetector := intent.NewDetector()
 	contextManager := appctx.NewManager(redisMemory)
@@ -94,7 +94,7 @@ func main() {
 	)
 
 	// 7. Configurar Servidor HTTP (Gin)
-	router := api.SetupRouter(orc)
+	router := api.SetupRouter(orc, cfg.Auth.APIKey, cfg.Auth.Enabled)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
