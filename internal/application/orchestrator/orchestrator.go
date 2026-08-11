@@ -6,7 +6,6 @@ import (
 	"log"
 
 	appctx "github.com/coderoycc/ai-go-api/internal/application/context"
-	"github.com/coderoycc/ai-go-api/internal/application/intent"
 	"github.com/coderoycc/ai-go-api/internal/application/policies"
 	"github.com/coderoycc/ai-go-api/internal/application/response"
 	"github.com/coderoycc/ai-go-api/internal/application/tools"
@@ -42,7 +41,7 @@ type ChatInput struct {
 type Orchestrator struct {
 	llm            ports.LLM
 	contextManager *appctx.Manager
-	intentDetector *intent.Detector
+	intentDetector ports.IntentDetector
 	policyEngine   *policies.Engine
 	toolRegistry   ports.ToolRegistry
 	toolExecutor   *tools.Executor
@@ -53,7 +52,7 @@ type Orchestrator struct {
 func NewOrchestrator(
 	llm ports.LLM,
 	contextManager *appctx.Manager,
-	intentDetector *intent.Detector,
+	intentDetector ports.IntentDetector,
 	policyEngine *policies.Engine,
 	toolRegistry ports.ToolRegistry,
 	toolExecutor *tools.Executor,
@@ -70,16 +69,15 @@ func NewOrchestrator(
 	}
 }
 
-// HandleChat procesa una solicitud de chat del usuario ejecutando el pipeline completo de 9 pasos:
+// HandleChat procesa una solicitud de chat del usuario ejecutando el pipeline completo:
 // 1. Recepción y permisos (ChatInput desde middleware).
-// 2. Definición del grupo de herramientas disponibles (toolRegistry).
-// 3. Validación de intención (IntentDetector). Si no es válida -> models.ErrInvalidIntent.
+// 2. Carga/Creación de sesión y adición de mensaje.
+// 3. Validación de la veracidad de intención (IntentDetector). Si no es válida -> models.ErrInvalidIntent.
 // 4. Envío del mensaje al LLM con las herramientas disponibles.
-// 5. Recepción de la herramienta indicada por el LLM.
+// 5. Recepción de la respuesta o herramienta indicada por el LLM.
 // 6. Validación de permisos con PolicyEngine (read/write). Si no coincide -> models.ErrPermissionDenied.
 // 7. Petición a la herramienta seleccionada. Si no existe o falla -> models.ErrToolNotFound / models.ErrToolExecutionFailed.
-// 8. Mapeo de la respuesta desde la herramienta (con ExcludedFields ya aplicados).
-// 9. Envío de la respuesta API estructurada.
+// 8. Registro de la respuesta y retorno formateado al cliente API.
 func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response.APIResponse {
 	// 1. CONTEXT MANAGER — Cargar o crear sesión
 	session, err := o.contextManager.LoadOrCreate(ctx, input.SessionID)
@@ -90,17 +88,16 @@ func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response
 
 	o.contextManager.AddUserMessage(ctx, session, input.Message)
 
-	// 2. VALIDAR LA INTENCIÓN DEL MENSAJE
-	detectedIntent, confident := o.intentDetector.DetectWithConfidence(input.Message)
-	if !confident {
-		log.Printf("[orchestrator] intención no válida o desconocida para mensaje: %s", input.Message)
+	// 2. VALIDAR LA VERACIDAD E INTENCIÓN DEL MENSAJE VÍA PORTS.INTENTDETECTOR
+	isValid, actionType, err := o.intentDetector.Validate(ctx, input.Message)
+	if err != nil || !isValid {
+		log.Printf("[orchestrator] intención no válida o rechazada para mensaje: %s (err: %v)", input.Message, err)
 		o.saveSession(ctx, session)
 		return o.formatter.FormatError(input.SessionID, models.ErrInvalidIntent.Error())
 	}
-	o.contextManager.UpdateIntent(session, detectedIntent)
 
 	// 3. EJECUTAR EL MENSAJE CON TODAS LAS HERRAMIENTAS VÍA LLM
-	messages := o.contextManager.BuildContextMessages(session, systemPrompt, detectedIntent)
+	messages := o.contextManager.BuildContextMessages(session, systemPrompt)
 	req := models.ChatRequest{
 		SessionID:   input.SessionID,
 		Messages:    messages,
@@ -125,7 +122,7 @@ func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response
 	if len(resp.ToolCalls) == 0 {
 		o.contextManager.AddAssistantMessage(ctx, session, resp.Content)
 		o.saveSession(ctx, session)
-		return o.formatter.FormatNatural(input.SessionID, resp.Content, string(detectedIntent), totalTokens)
+		return o.formatter.FormatNatural(input.SessionID, resp.Content, actionType, totalTokens)
 	}
 
 	// 5. RECEPCIÓN DE LA HERRAMIENTA INDICADA POR EL LLM
@@ -155,11 +152,12 @@ func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response
 		return o.formatter.FormatError(input.SessionID, models.ErrToolExecutionFailed.Error())
 	}
 
-	// 9. PERSISTIR EN REDIS Y RETORNAR RESPUESTA API ESTRUCTURADA
+	// 9. ACTUALIZAR ÚLTIMA HERRAMIENTA Y RETORNAR RESPUESTA API ESTRUCTURADA
+	o.contextManager.UpdateLastTool(session, toolCall.Name)
 	resultBytes, _ := json.Marshal(result)
 	o.contextManager.AddAssistantMessage(ctx, session, string(resultBytes))
 	o.saveSession(ctx, session)
-	return o.formatter.FormatRaw(input.SessionID, string(detectedIntent), result)
+	return o.formatter.FormatRaw(input.SessionID, toolCall.Name, result)
 }
 
 // saveSession persiste la sesión de forma segura (loguea el error sin propagarlo).

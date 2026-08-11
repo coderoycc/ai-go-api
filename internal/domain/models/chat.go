@@ -16,27 +16,6 @@ const (
 	RoleTool Role = "tool"
 )
 
-// IntentType clasifica la intención del usuario detectada por el orquestador.
-type IntentType string
-
-const (
-	// IntentSearchProduct indica búsqueda de productos por término o categoría.
-	IntentSearchProduct IntentType = "search_product"
-	// IntentGetProduct indica consulta de un producto específico por ID.
-	IntentGetProduct IntentType = "get_product"
-	// IntentCheckStock indica consulta de disponibilidad de stock.
-	IntentCheckStock IntentType = "check_stock"
-	// IntentCreateSale indica intención de crear/registrar una venta.
-	IntentCreateSale IntentType = "create_sale"
-	// IntentGetSale indica consulta de una venta existente.
-	IntentGetSale IntentType = "get_sale"
-	// IntentCancelSale indica intención de cancelar una venta.
-	IntentCancelSale IntentType = "cancel_sale"
-	// IntentGeneral indica una consulta general que no mapea a herramientas específicas.
-	IntentGeneral IntentType = "general"
-	// IntentUnknown indica que no se pudo clasificar la intención.
-	IntentUnknown IntentType = "unknown"
-)
 
 // Message representa un mensaje individual dentro de la conversación.
 type Message struct {
