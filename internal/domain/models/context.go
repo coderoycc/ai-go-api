@@ -13,8 +13,8 @@ type SessionContext struct {
 	Entities map[string]string `json:"entities,omitempty"`
 	// History contiene los últimos mensajes de la conversación para mantener contexto.
 	History []Message `json:"history,omitempty"`
-	// LastIntent registra la última intención detectada en la conversación.
-	LastIntent IntentType `json:"last_intent,omitempty"`
+	// LastTool registra el nombre de la última herramienta ejecutada en la conversación.
+	LastTool string `json:"last_tool,omitempty"`
 	// Metadata almacena información adicional arbitraria de la sesión.
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 	// CreatedAt marca cuándo se creó la sesión.
