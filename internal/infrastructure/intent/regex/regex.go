@@ -1,4 +1,4 @@
-package intent
+package regex
 
 import (
 	"context"
@@ -53,7 +53,7 @@ func NewRegexIntentDetector() ports.IntentDetector {
 	}
 }
 
-// NewDetector mantiene el constructor tradicional retornando ports.IntentDetector.
+// NewDetector retorna una instancia de ports.IntentDetector basada en expresiones regulares.
 func NewDetector() ports.IntentDetector {
 	return NewRegexIntentDetector()
 }

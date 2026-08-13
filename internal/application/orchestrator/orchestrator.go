@@ -8,7 +8,6 @@ import (
 	appctx "github.com/coderoycc/ai-go-api/internal/application/context"
 	"github.com/coderoycc/ai-go-api/internal/application/policies"
 	"github.com/coderoycc/ai-go-api/internal/application/response"
-	"github.com/coderoycc/ai-go-api/internal/application/tools"
 	"github.com/coderoycc/ai-go-api/internal/domain/models"
 	"github.com/coderoycc/ai-go-api/internal/domain/ports"
 )
@@ -37,14 +36,12 @@ type ChatInput struct {
 
 // Orchestrator es el núcleo coordinador del AI Engine. Ensambla la secuencia completa:
 // Intent Detector → Context Manager → LLM Tool Calling → Policy Engine → Response Formatter.
-// Solo interactúa con interfaces (puertos), nunca con implementaciones concretas.
 type Orchestrator struct {
 	llm            ports.LLM
 	contextManager *appctx.Manager
 	intentDetector ports.IntentDetector
 	policyEngine   *policies.Engine
 	toolRegistry   ports.ToolRegistry
-	toolExecutor   *tools.Executor
 	formatter      *response.Formatter
 }
 
@@ -55,7 +52,6 @@ func NewOrchestrator(
 	intentDetector ports.IntentDetector,
 	policyEngine *policies.Engine,
 	toolRegistry ports.ToolRegistry,
-	toolExecutor *tools.Executor,
 	formatter *response.Formatter,
 ) *Orchestrator {
 	return &Orchestrator{
@@ -64,7 +60,6 @@ func NewOrchestrator(
 		intentDetector: intentDetector,
 		policyEngine:   policyEngine,
 		toolRegistry:   toolRegistry,
-		toolExecutor:   toolExecutor,
 		formatter:      formatter,
 	}
 }

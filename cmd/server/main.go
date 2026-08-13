@@ -11,12 +11,12 @@ import (
 
 	api "github.com/coderoycc/ai-go-api/internal/api"
 	appctx "github.com/coderoycc/ai-go-api/internal/application/context"
-	"github.com/coderoycc/ai-go-api/internal/application/intent"
 	"github.com/coderoycc/ai-go-api/internal/application/orchestrator"
 	"github.com/coderoycc/ai-go-api/internal/application/policies"
 	"github.com/coderoycc/ai-go-api/internal/application/response"
 	toolsApp "github.com/coderoycc/ai-go-api/internal/application/tools"
 	"github.com/coderoycc/ai-go-api/internal/domain/ports"
+	regexIntent "github.com/coderoycc/ai-go-api/internal/infrastructure/intent/regex"
 	llmClaude "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/claude"
 	llmDeepSeek "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/deepseek"
 	llmGemini "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/gemini"
@@ -76,10 +76,9 @@ func main() {
 	}
 	log.Printf("Herramientas registradas: %d herramientas disponibles", len(registry.List()))
 
-	// 6. Ensamblar Componentes del Dominio y Aplicación
+	// 5. Ensamblar Componentes del Dominio y Aplicación
 	policyEngine := policies.NewEngine(registry)
-	toolExecutor := toolsApp.NewExecutor(registry, policyEngine)
-	intentDetector := intent.NewDetector()
+	intentDetector := regexIntent.NewDetector()
 	contextManager := appctx.NewManager(redisMemory)
 	formatter := response.NewFormatter()
 
@@ -89,7 +88,6 @@ func main() {
 		intentDetector,
 		policyEngine,
 		registry,
-		toolExecutor,
 		formatter,
 	)
 
