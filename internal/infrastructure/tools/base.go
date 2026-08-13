@@ -13,18 +13,28 @@ import (
 	"github.com/coderoycc/ai-go-api/internal/domain/ports"
 )
 
+// HTTPToolDescriptor define los métodos adicionales requeridos por BaseHTTPTool
+// para ejecutar la petición HTTP y aplicar el filtrado de campos de respuesta.
+type HTTPToolDescriptor interface {
+	ports.Tool
+	Method() string
+	EndpointURL() string
+	ExcludedFields() []string
+	FallbackArgKey() string
+}
+
 // BaseHTTPTool provee la implementación reutilizable de Execute para cualquier herramienta HTTP.
 // Al embeber BaseHTTPTool en un struct de herramienta concreta (como StockCheckTool),
 // la herramienta hereda la ejecución HTTP completa y el filtrado automático de ExcludedFields
 // sin necesidad de implementar ni Execute ni MapResponse.
 type BaseHTTPTool struct {
-	tool       ports.Tool
+	tool       HTTPToolDescriptor
 	httpClient *http.Client
 }
 
 // NewBaseHTTPTool inicializa BaseHTTPTool asociando la referencia a la herramienta concreta
 // y configurando el cliente HTTP con el timeout indicado.
-func NewBaseHTTPTool(tool ports.Tool, timeout time.Duration) BaseHTTPTool {
+func NewBaseHTTPTool(tool HTTPToolDescriptor, timeout time.Duration) BaseHTTPTool {
 	if timeout == 0 {
 		timeout = 10 * time.Second
 	}

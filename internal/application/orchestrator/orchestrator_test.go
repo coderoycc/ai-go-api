@@ -7,13 +7,13 @@ import (
 	"time"
 
 	appctx "github.com/coderoycc/ai-go-api/internal/application/context"
-	"github.com/coderoycc/ai-go-api/internal/application/intent"
 	"github.com/coderoycc/ai-go-api/internal/application/orchestrator"
 	"github.com/coderoycc/ai-go-api/internal/application/policies"
 	"github.com/coderoycc/ai-go-api/internal/application/response"
 	apptools "github.com/coderoycc/ai-go-api/internal/application/tools"
 	"github.com/coderoycc/ai-go-api/internal/domain/models"
 	"github.com/coderoycc/ai-go-api/internal/domain/ports/mocks"
+	regexIntent "github.com/coderoycc/ai-go-api/internal/infrastructure/intent/regex"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -27,12 +27,7 @@ type MockTool struct {
 
 func (m *MockTool) Name() string                     { return m.ToolName }
 func (m *MockTool) Description() string              { return "Mock tool for testing" }
-func (m *MockTool) Method() string                   { return "POST" }
-func (m *MockTool) EndpointURL() string              { return "http://localhost/mock" }
 func (m *MockTool) Parameters() map[string]any       { return map[string]any{"type": "object"} }
-func (m *MockTool) ResponseSchema() map[string]any   { return map[string]any{"type": "object"} }
-func (m *MockTool) ExcludedFields() []string         { return nil }
-func (m *MockTool) FallbackArgKey() string           { return "" }
 func (m *MockTool) RequiredPermission() models.Permission {
 	if m.ReqPermission != "" {
 		return m.ReqPermission
@@ -45,7 +40,7 @@ func (m *MockTool) Execute(ctx context.Context, arguments string) (any, error) {
 }
 
 func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory, mockTool *MockTool) *orchestrator.Orchestrator {
-	intentDetector := intent.NewDetector()
+	intentDetector := regexIntent.NewDetector()
 	contextManager := appctx.NewManager(mockMemory)
 
 	toolRegistry := apptools.NewRegistry()
@@ -54,7 +49,6 @@ func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory,
 	}
 
 	policyEngine := policies.NewEngine(toolRegistry)
-	toolExecutor := apptools.NewExecutor(toolRegistry, policyEngine)
 	formatter := response.NewFormatter()
 
 	return orchestrator.NewOrchestrator(
@@ -63,7 +57,6 @@ func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory,
 		intentDetector,
 		policyEngine,
 		toolRegistry,
-		toolExecutor,
 		formatter,
 	)
 }
