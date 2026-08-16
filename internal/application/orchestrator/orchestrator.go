@@ -41,7 +41,6 @@ type Orchestrator struct {
 	contextManager *appctx.Manager
 	intentDetector ports.IntentDetector
 	policyEngine   *policies.Engine
-	toolRegistry   ports.ToolRegistry
 	formatter      *response.Formatter
 }
 
@@ -51,7 +50,6 @@ func NewOrchestrator(
 	contextManager *appctx.Manager,
 	intentDetector ports.IntentDetector,
 	policyEngine *policies.Engine,
-	toolRegistry ports.ToolRegistry,
 	formatter *response.Formatter,
 ) *Orchestrator {
 	return &Orchestrator{
@@ -59,7 +57,6 @@ func NewOrchestrator(
 		contextManager: contextManager,
 		intentDetector: intentDetector,
 		policyEngine:   policyEngine,
-		toolRegistry:   toolRegistry,
 		formatter:      formatter,
 	}
 }
@@ -68,12 +65,12 @@ func NewOrchestrator(
 // 1. Recepción y permisos (ChatInput desde middleware).
 // 2. Carga/Creación de sesión y adición de mensaje.
 // 3. Validación de la veracidad de intención (IntentDetector). Si no es válida -> models.ErrInvalidIntent.
-// 4. Envío del mensaje al LLM con las herramientas disponibles.
+// 4. Envío del mensaje al LLM con las herramientas disponibles (tools).
 // 5. Recepción de la respuesta o herramienta indicada por el LLM.
 // 6. Validación de permisos con PolicyEngine (read/write). Si no coincide -> models.ErrPermissionDenied.
 // 7. Petición a la herramienta seleccionada. Si no existe o falla -> models.ErrToolNotFound / models.ErrToolExecutionFailed.
 // 8. Registro de la respuesta y retorno formateado al cliente API.
-func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response.APIResponse {
+func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput, tools []ports.Tool) response.APIResponse {
 	// 1. CONTEXT MANAGER — Cargar o crear sesión
 	session, err := o.contextManager.LoadOrCreate(ctx, input.SessionID)
 	if err != nil {
@@ -91,12 +88,12 @@ func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response
 		return o.formatter.FormatError(input.SessionID, models.ErrInvalidIntent.Error())
 	}
 
-	// 3. EJECUTAR EL MENSAJE CON TODAS LAS HERRAMIENTAS VÍA LLM
+	// 3. EJECUTAR EL MENSAJE CON LAS HERRAMIENTAS DISPONIBLES VÍA LLM
 	messages := o.contextManager.BuildContextMessages(session, systemPrompt)
 	req := models.ChatRequest{
 		SessionID:   input.SessionID,
 		Messages:    messages,
-		Tools:       o.toolRegistry.Definitions(),
+		Tools:       definitions(tools),
 		Temperature: 0.7,
 		MaxTokens:   1024,
 	}
@@ -123,20 +120,20 @@ func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response
 	// 5. RECEPCIÓN DE LA HERRAMIENTA INDICADA POR EL LLM
 	toolCall := resp.ToolCalls[0]
 
-	// 6. VERIFICAR SI EL PERMISO DEL USUARIO (read/write) COINCIDE CON EL DE LA TOOL
-	policyResult := o.policyEngine.EvaluateTool(toolCall.Name, input.Permission)
-	if !policyResult.Allowed {
-		log.Printf("[orchestrator] permiso insuficiente para herramienta %s: %s", toolCall.Name, policyResult.Reason)
-		o.saveSession(ctx, session)
-		return o.formatter.FormatError(input.SessionID, models.ErrPermissionDenied.Error())
-	}
-
-	// 7. PETICIÓN A LA HERRAMIENTA SELECCIONADA
-	tool, exists := o.toolRegistry.Get(toolCall.Name)
+	// 6. BUSCAR LA HERRAMIENTA EN LAS DISPONIBLES PARA ESTE ENDPOINT
+	tool, exists := findTool(tools, toolCall.Name)
 	if !exists {
 		log.Printf("[orchestrator] herramienta no encontrada: %s", toolCall.Name)
 		o.saveSession(ctx, session)
 		return o.formatter.FormatError(input.SessionID, models.ErrToolNotFound.Error())
+	}
+
+	// 7. VERIFICAR SI EL PERMISO DEL USUARIO (read/write) COINCIDE CON EL DE LA TOOL
+	policyResult := o.policyEngine.EvaluateTool(tool, input.Permission)
+	if !policyResult.Allowed {
+		log.Printf("[orchestrator] permiso insuficiente para herramienta %s: %s", toolCall.Name, policyResult.Reason)
+		o.saveSession(ctx, session)
+		return o.formatter.FormatError(input.SessionID, models.ErrPermissionDenied.Error())
 	}
 
 	// 8. EJECUCIÓN DE LA HERRAMIENTA (Aplica HTTP y ExcludedFields automáticamente)
@@ -153,6 +150,29 @@ func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput) response
 	o.contextManager.AddAssistantMessage(ctx, session, string(resultBytes))
 	o.saveSession(ctx, session)
 	return o.formatter.FormatRaw(input.SessionID, toolCall.Name, result)
+}
+
+// definitions convierte las herramientas disponibles en el formato que espera el LLM.
+func definitions(tools []ports.Tool) []models.ToolDefinition {
+	defs := make([]models.ToolDefinition, 0, len(tools))
+	for _, tool := range tools {
+		defs = append(defs, models.ToolDefinition{
+			Name:        tool.Name(),
+			Description: tool.Description(),
+			Parameters:  tool.Parameters(),
+		})
+	}
+	return defs
+}
+
+// findTool busca una herramienta por nombre dentro de las disponibles.
+func findTool(tools []ports.Tool, name string) (ports.Tool, bool) {
+	for _, tool := range tools {
+		if tool.Name() == name {
+			return tool, true
+		}
+	}
+	return nil, false
 }
 
 // saveSession persiste la sesión de forma segura (loguea el error sin propagarlo).

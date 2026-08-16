@@ -29,20 +29,3 @@ type Tool interface {
 type ToolGroup interface {
 	Tools() []Tool
 }
-
-// ToolRegistry gestiona el registro y la búsqueda de herramientas disponibles
-// para el orquestador. Permite registrar tanto herramientas individuales (Tool)
-// como grupos completos de herramientas (ToolGroup).
-type ToolRegistry interface {
-	// Register registra una nueva herramienta o grupo de herramientas en el registry.
-	Register(item interface{}) error
-
-	// Get obtiene una herramienta por su nombre.
-	Get(name string) (Tool, bool)
-
-	// List retorna todas las herramientas registradas.
-	List() []Tool
-
-	// Definitions retorna las definiciones de todas las herramientas registradas.
-	Definitions() []models.ToolDefinition
-}
