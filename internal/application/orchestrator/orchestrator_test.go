@@ -10,8 +10,8 @@ import (
 	"github.com/coderoycc/ai-go-api/internal/application/orchestrator"
 	"github.com/coderoycc/ai-go-api/internal/application/policies"
 	"github.com/coderoycc/ai-go-api/internal/application/response"
-	apptools "github.com/coderoycc/ai-go-api/internal/application/tools"
 	"github.com/coderoycc/ai-go-api/internal/domain/models"
+	"github.com/coderoycc/ai-go-api/internal/domain/ports"
 	"github.com/coderoycc/ai-go-api/internal/domain/ports/mocks"
 	regexIntent "github.com/coderoycc/ai-go-api/internal/infrastructure/intent/regex"
 	"github.com/stretchr/testify/assert"
@@ -39,16 +39,11 @@ func (m *MockTool) Execute(ctx context.Context, arguments string) (any, error) {
 	return args.Get(0), args.Error(1)
 }
 
-func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory, mockTool *MockTool) *orchestrator.Orchestrator {
+func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory, tools ...ports.Tool) *orchestrator.Orchestrator {
 	intentDetector := regexIntent.NewDetector()
 	contextManager := appctx.NewManager(mockMemory)
 
-	toolRegistry := apptools.NewRegistry()
-	if mockTool != nil {
-		_ = toolRegistry.Register(mockTool)
-	}
-
-	policyEngine := policies.NewEngine(toolRegistry)
+	policyEngine := policies.NewEngine()
 	formatter := response.NewFormatter()
 
 	return orchestrator.NewOrchestrator(
@@ -56,9 +51,12 @@ func setupTestOrchestrator(mockLLM *mocks.MockLLM, mockMemory *mocks.MockMemory,
 		contextManager,
 		intentDetector,
 		policyEngine,
-		toolRegistry,
 		formatter,
 	)
+}
+
+func (m *MockTool) toolSet() []ports.Tool {
+	return []ports.Tool{m}
 }
 
 // Caso A: La política (PolicyEngine) bloquea la ejecución de una herramienta si el usuario carece de permisos.
@@ -83,7 +81,7 @@ func TestOrchestrator_CaseA_PolicyBlocksToolExecution(t *testing.T) {
 
 	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(llmResp, nil).Once()
 
-	orc := setupTestOrchestrator(mockLLM, mockMemory, mockTool)
+	orc := setupTestOrchestrator(mockLLM, mockMemory)
 
 	input := orchestrator.ChatInput{
 		SessionID:  "session-block",
@@ -91,7 +89,7 @@ func TestOrchestrator_CaseA_PolicyBlocksToolExecution(t *testing.T) {
 		Permission: models.PermissionRead, // solo lectura, pero cancel_sale requiere write
 	}
 
-	res := orc.HandleChat(context.Background(), input)
+	res := orc.HandleChat(context.Background(), input, mockTool.toolSet())
 
 	assert.Contains(t, res.Message, models.ErrPermissionDenied.Error())
 	mockLLM.AssertNumberOfCalls(t, "Chat", 1)
@@ -114,14 +112,14 @@ func TestOrchestrator_CaseB_LLMDirectNaturalResponse(t *testing.T) {
 
 	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(expectedLLMResp, nil)
 
-	orc := setupTestOrchestrator(mockLLM, mockMemory, nil)
+	orc := setupTestOrchestrator(mockLLM, mockMemory)
 
 	input := orchestrator.ChatInput{
 		SessionID: "session-direct",
 		Message:   "Hola, buenas tardes",
 	}
 
-	res := orc.HandleChat(context.Background(), input)
+	res := orc.HandleChat(context.Background(), input, nil)
 
 	assert.Equal(t, response.ModeNatural, res.Mode)
 	assert.Equal(t, "Hola! Soy tu asistente de ventas. ¿En qué puedo ayudarte hoy?", res.Message)
@@ -164,7 +162,7 @@ func TestOrchestrator_CaseC_ToolCallingExecution(t *testing.T) {
 
 	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(llmResp, nil).Once()
 
-	orc := setupTestOrchestrator(mockLLM, mockMemory, mockTool)
+	orc := setupTestOrchestrator(mockLLM, mockMemory)
 
 	input := orchestrator.ChatInput{
 		SessionID:  "session-tool",
@@ -172,7 +170,7 @@ func TestOrchestrator_CaseC_ToolCallingExecution(t *testing.T) {
 		Permission: models.PermissionRead,
 	}
 
-	resResult := orc.HandleChat(context.Background(), input)
+	resResult := orc.HandleChat(context.Background(), input, mockTool.toolSet())
 
 	assert.Equal(t, response.ModeRaw, resResult.Mode)
 	assert.NotNil(t, resResult.Data)
@@ -207,7 +205,7 @@ func TestOrchestrator_CaseD_ToolExecutionFailure(t *testing.T) {
 
 	mockLLM.On("Chat", mock.Anything, mock.Anything).Return(llmResp, nil).Once()
 
-	orc := setupTestOrchestrator(mockLLM, mockMemory, mockTool)
+	orc := setupTestOrchestrator(mockLLM, mockMemory)
 
 	input := orchestrator.ChatInput{
 		SessionID:  "session-err",
@@ -215,7 +213,7 @@ func TestOrchestrator_CaseD_ToolExecutionFailure(t *testing.T) {
 		Permission: models.PermissionRead,
 	}
 
-	res := orc.HandleChat(context.Background(), input)
+	res := orc.HandleChat(context.Background(), input, mockTool.toolSet())
 
 	assert.Contains(t, res.Message, models.ErrToolExecutionFailed.Error())
 	mockTool.AssertCalled(t, "Execute", mock.Anything, mock.Anything)

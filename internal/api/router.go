@@ -3,12 +3,12 @@ package api
 import (
 	"time"
 
-	"github.com/coderoycc/ai-go-api/internal/application/orchestrator"
+	"github.com/coderoycc/ai-go-api/internal/application/services"
 	"github.com/gin-gonic/gin"
 )
 
-// SetupRouter configura el enrutador Gin con sus middlewares y rutas.
-func SetupRouter(orc *orchestrator.Orchestrator, authAPIKey string, authEnabled bool) *gin.Engine {
+// SetupRouter configura el enrutador Gin con sus middlewares y rutas explícitas.
+func SetupRouter(productChatService *services.ProductChatService, authAPIKey string, authEnabled bool) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 
@@ -16,8 +16,6 @@ func SetupRouter(orc *orchestrator.Orchestrator, authAPIKey string, authEnabled 
 	router.Use(RecoveryMiddleware())
 	router.Use(LoggerMiddleware())
 	router.Use(CORSMiddleware())
-
-	handler := NewChatHandler(orc)
 
 	// Ruta de HealthCheck
 	router.GET("/health", func(c *gin.Context) {
@@ -32,7 +30,9 @@ func SetupRouter(orc *orchestrator.Orchestrator, authAPIKey string, authEnabled 
 	v1 := router.Group("/api/v1")
 	v1.Use(AuthMiddleware(authAPIKey, authEnabled))
 	{
-		v1.POST("/chat", handler.HandleChat)
+		// Endpoint explícito de chat para productos
+		productHandler := NewProductChatHandler(productChatService)
+		v1.POST("/products/chat", productHandler.HandleChat)
 	}
 
 	return router

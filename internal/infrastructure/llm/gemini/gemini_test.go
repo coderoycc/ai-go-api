@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	apptools "github.com/coderoycc/ai-go-api/internal/application/tools"
 	"github.com/coderoycc/ai-go-api/internal/domain/models"
 	productsTools "github.com/coderoycc/ai-go-api/internal/infrastructure/tools/products"
 )
@@ -99,11 +98,16 @@ func TestGemini_InteractiveInspection(t *testing.T) {
 		},
 	}
 
-	// Cargar herramientas registradas en la aplicación
-	toolRegistry := apptools.NewRegistry()
+	// Cargar herramientas de productos directamente desde el grupo
 	productTool := productsTools.NewProductTool("http://localhost", time.Second)
-	_ = toolRegistry.Register(productTool)
-	toolDefs := toolRegistry.Definitions()
+	toolDefs := make([]models.ToolDefinition, 0, len(productTool.Tools()))
+	for _, tool := range productTool.Tools() {
+		toolDefs = append(toolDefs, models.ToolDefinition{
+			Name:        tool.Name(),
+			Description: tool.Description(),
+			Parameters:  tool.Parameters(),
+		})
+	}
 
 	// Construir ChatRequest exacto que se envía al modelo
 	req := models.ChatRequest{

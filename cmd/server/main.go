@@ -11,10 +11,9 @@ import (
 
 	api "github.com/coderoycc/ai-go-api/internal/api"
 	appctx "github.com/coderoycc/ai-go-api/internal/application/context"
-	"github.com/coderoycc/ai-go-api/internal/application/orchestrator"
 	"github.com/coderoycc/ai-go-api/internal/application/policies"
 	"github.com/coderoycc/ai-go-api/internal/application/response"
-	toolsApp "github.com/coderoycc/ai-go-api/internal/application/tools"
+	"github.com/coderoycc/ai-go-api/internal/application/services"
 	"github.com/coderoycc/ai-go-api/internal/domain/ports"
 	regexIntent "github.com/coderoycc/ai-go-api/internal/infrastructure/intent/regex"
 	llmClaude "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/claude"
@@ -23,7 +22,6 @@ import (
 	llmOllama "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/ollama"
 	llmOpenAI "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/openai"
 	redisStore "github.com/coderoycc/ai-go-api/internal/infrastructure/memory/redis"
-	productsTools "github.com/coderoycc/ai-go-api/internal/infrastructure/tools/products"
 	config "github.com/coderoycc/ai-go-api/internal/shared/config"
 )
 
@@ -67,32 +65,25 @@ func main() {
 	}
 	log.Printf("Proveedor LLM activo: %s (Modelo: %s)", cfg.LLM.Provider, cfg.LLM.Model)
 
-	// 4. Inicializar Registro y Registrar Herramientas de Productos
-	registry := toolsApp.NewRegistry()
-
-	productTool := productsTools.NewProductTool(cfg.Clients.ProductsURL, cfg.Clients.Timeout)
-	if err := registry.Register(productTool); err != nil {
-		log.Fatalf("Error registrando herramientas de productos: %v", err)
-	}
-	log.Printf("Herramientas registradas: %d herramientas disponibles", len(registry.List()))
-
-	// 5. Ensamblar Componentes del Dominio y Aplicación
-	policyEngine := policies.NewEngine(registry)
+	// 4. Dependencias compartidas de la capa de aplicación
 	intentDetector := regexIntent.NewDetector()
 	contextManager := appctx.NewManager(redisMemory)
 	formatter := response.NewFormatter()
+	policyEngine := policies.NewEngine()
 
-	orc := orchestrator.NewOrchestrator(
+	// 5. Ensamblar servicios por endpoint
+	productChatService := services.NewProductChatService(
 		llmAdapter,
 		contextManager,
 		intentDetector,
 		policyEngine,
-		registry,
 		formatter,
+		cfg.Clients.ProductsURL,
+		cfg.Clients.Timeout,
 	)
 
-	// 7. Configurar Servidor HTTP (Gin)
-	router := api.SetupRouter(orc, cfg.Auth.APIKey, cfg.Auth.Enabled)
+	// 6. Configurar Servidor HTTP (Gin)
+	router := api.SetupRouter(productChatService, cfg.Auth.APIKey, cfg.Auth.Enabled)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
@@ -109,7 +100,7 @@ func main() {
 		}
 	}()
 
-	// 8. Manejo de Cierre Graceful (Graceful Shutdown)
+	// 7. Manejo de Cierre Graceful (Graceful Shutdown)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit

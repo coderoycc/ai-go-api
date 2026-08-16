@@ -4,25 +4,24 @@ import (
 	"net/http"
 
 	"github.com/coderoycc/ai-go-api/internal/application/orchestrator"
+	"github.com/coderoycc/ai-go-api/internal/application/services"
 	"github.com/coderoycc/ai-go-api/internal/domain/models"
 	"github.com/gin-gonic/gin"
 )
 
-// ChatHandler expone endpoints HTTP para interactuar con el motor orquestador.
-type ChatHandler struct {
-	orchestrator *orchestrator.Orchestrator
+// ProductChatHandler expone el endpoint HTTP de chat de productos.
+type ProductChatHandler struct {
+	service *services.ProductChatService
 }
 
-// NewChatHandler instancia un nuevo controlador HTTP de Chat.
-func NewChatHandler(orc *orchestrator.Orchestrator) *ChatHandler {
-	return &ChatHandler{
-		orchestrator: orc,
-	}
+// NewProductChatHandler instancia un nuevo controlador HTTP de chat de productos.
+func NewProductChatHandler(service *services.ProductChatService) *ProductChatHandler {
+	return &ProductChatHandler{service: service}
 }
 
-// HandleChat procesa las solicitudes POST /api/v1/chat.
-// Extrae session_id y message del body limpio y los envía al orquestador.
-func (h *ChatHandler) HandleChat(c *gin.Context) {
+// HandleChat procesa las solicitudes POST /api/v1/products/chat.
+// Extrae session_id y message del body y los envía al servicio de productos.
+func (h *ProductChatHandler) HandleChat(c *gin.Context) {
 	var req ChatHTTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -53,7 +52,7 @@ func (h *ChatHandler) HandleChat(c *gin.Context) {
 		Permission: userPerm,
 	}
 
-	response := h.orchestrator.HandleChat(c.Request.Context(), input)
+	response := h.service.HandleChat(c.Request.Context(), input)
 
 	c.JSON(http.StatusOK, response)
 }
