@@ -61,16 +61,25 @@ func NewOrchestrator(
 	}
 }
 
-// HandleChat procesa una solicitud de chat del usuario ejecutando el pipeline completo:
+// HandleChat procesa una solicitud de chat del usuario usando el prompt del sistema por defecto.
+func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput, tools []ports.Tool) response.APIResponse {
+	return o.HandleChatWithPrompt(ctx, input, tools, systemPrompt)
+}
+
+// HandleChatWithPrompt procesa una solicitud de chat del usuario ejecutando el pipeline completo con un systemPrompt personalizado:
 // 1. Recepción y permisos (ChatInput desde middleware).
 // 2. Carga/Creación de sesión y adición de mensaje.
 // 3. Validación de la veracidad de intención (IntentDetector). Si no es válida -> models.ErrInvalidIntent.
-// 4. Envío del mensaje al LLM con las herramientas disponibles (tools).
+// 4. Envío del mensaje al LLM con las herramientas disponibles (tools) y el prompt del sistema.
 // 5. Recepción de la respuesta o herramienta indicada por el LLM.
 // 6. Validación de permisos con PolicyEngine (read/write). Si no coincide -> models.ErrPermissionDenied.
 // 7. Petición a la herramienta seleccionada. Si no existe o falla -> models.ErrToolNotFound / models.ErrToolExecutionFailed.
 // 8. Registro de la respuesta y retorno formateado al cliente API.
-func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput, tools []ports.Tool) response.APIResponse {
+func (o *Orchestrator) HandleChatWithPrompt(ctx context.Context, input ChatInput, tools []ports.Tool, customSystemPrompt string) response.APIResponse {
+	if customSystemPrompt == "" {
+		customSystemPrompt = systemPrompt
+	}
+
 	// 1. CONTEXT MANAGER — Cargar o crear sesión
 	session, err := o.contextManager.LoadOrCreate(ctx, input.SessionID)
 	if err != nil {
@@ -89,7 +98,7 @@ func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput, tools []
 	}
 
 	// 3. EJECUTAR EL MENSAJE CON LAS HERRAMIENTAS DISPONIBLES VÍA LLM
-	messages := o.contextManager.BuildContextMessages(session, systemPrompt)
+	messages := o.contextManager.BuildContextMessages(session, customSystemPrompt)
 	req := models.ChatRequest{
 		SessionID:   input.SessionID,
 		Messages:    messages,
