@@ -11,9 +11,10 @@ import (
 
 	api "github.com/coderoycc/ai-go-api/internal/api"
 	appctx "github.com/coderoycc/ai-go-api/internal/application/context"
+	"github.com/coderoycc/ai-go-api/internal/application/engine"
+	"github.com/coderoycc/ai-go-api/internal/application/orchestrator"
 	"github.com/coderoycc/ai-go-api/internal/application/policies"
 	"github.com/coderoycc/ai-go-api/internal/application/response"
-	"github.com/coderoycc/ai-go-api/internal/application/services"
 	"github.com/coderoycc/ai-go-api/internal/domain/ports"
 	regexIntent "github.com/coderoycc/ai-go-api/internal/infrastructure/intent/regex"
 	llmClaude "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/claude"
@@ -22,6 +23,7 @@ import (
 	llmOllama "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/ollama"
 	llmOpenAI "github.com/coderoycc/ai-go-api/internal/infrastructure/llm/openai"
 	redisStore "github.com/coderoycc/ai-go-api/internal/infrastructure/memory/redis"
+	productsTools "github.com/coderoycc/ai-go-api/internal/infrastructure/tools/products"
 	config "github.com/coderoycc/ai-go-api/internal/shared/config"
 )
 
@@ -65,25 +67,26 @@ func main() {
 	}
 	log.Printf("Proveedor LLM activo: %s (Modelo: %s)", cfg.LLM.Provider, cfg.LLM.Model)
 
-	// 4. Dependencias compartidas de la capa de aplicación
+	// 4. Dependencias compartidas de la capa de aplicación y Motor de Features
 	intentDetector := regexIntent.NewDetector()
 	contextManager := appctx.NewManager(redisMemory)
 	formatter := response.NewFormatter()
 	policyEngine := policies.NewEngine()
 
-	// 5. Ensamblar servicios por endpoint
-	productChatService := services.NewProductChatService(
+	orch := orchestrator.NewOrchestrator(
 		llmAdapter,
 		contextManager,
 		intentDetector,
 		policyEngine,
 		formatter,
-		cfg.Clients.ProductsURL,
-		cfg.Clients.Timeout,
 	)
+	featureEngine := engine.NewFeatureEngine(orch)
 
-	// 6. Configurar Servidor HTTP (Gin)
-	router := api.SetupRouter(productChatService, cfg.Auth.APIKey, cfg.Auth.Enabled)
+	// 5. Instanciar grupos de herramientas de la API (ej. Productos)
+	productToolGroup := productsTools.NewProductTool(cfg.Clients.ProductsURL, cfg.Clients.Timeout)
+
+	// 6. Configurar Servidor HTTP (Gin) usando FeatureEngine
+	router := api.SetupRouter(featureEngine, productToolGroup, cfg.Auth.APIKey, cfg.Auth.Enabled)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
