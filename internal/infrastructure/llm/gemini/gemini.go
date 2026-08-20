@@ -91,15 +91,46 @@ func mapMessagesToGemini(messages []models.Message) ([]*genai.Content, *genai.Co
 			})
 
 		case models.RoleAssistant:
-			contents = append(contents, &genai.Content{
-				Role:  "model",
-				Parts: []*genai.Part{{Text: msg.Content}},
-			})
+			// El mensaje del asistente puede contener texto plano, solicitudes de tools (ToolCalls), o ambos.
+			parts := make([]*genai.Part, 0)
+			if msg.Content != "" {
+				parts = append(parts, &genai.Part{Text: msg.Content})
+			}
+			for _, tc := range msg.ToolCalls {
+				var args map[string]any
+				if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
+					args = map[string]any{"raw": tc.Arguments}
+				}
+				parts = append(parts, &genai.Part{
+					FunctionCall: &genai.FunctionCall{
+						Name: tc.Name,
+						Args: args,
+					},
+				})
+			}
+			if len(parts) > 0 {
+				contents = append(contents, &genai.Content{
+					Role:  "model",
+					Parts: parts,
+				})
+			}
 
 		case models.RoleTool:
+			// Gemini requiere FunctionResponse para resultados de herramientas.
+			// El ToolCallID identifica qué función fue ejecutada.
+			var resultData map[string]any
+			if err := json.Unmarshal([]byte(msg.Content), &resultData); err != nil {
+				// Si el resultado no es un objeto JSON, envolvemos en un campo genérico
+				resultData = map[string]any{"result": msg.Content}
+			}
 			contents = append(contents, &genai.Content{
-				Role:  "user",
-				Parts: []*genai.Part{{Text: msg.Content}},
+				Role: "user",
+				Parts: []*genai.Part{{
+					FunctionResponse: &genai.FunctionResponse{
+						Name:     msg.ToolCallID,
+						Response: resultData,
+					},
+				}},
 			})
 		}
 	}
@@ -204,8 +235,13 @@ func mapToGeminiSchema(params map[string]interface{}) *genai.Schema {
 		}
 	}
 
-	if required, ok := params["required"].([]interface{}); ok {
-		for _, r := range required {
+	// Manejar ambos tipos: []string (como lo definen las tools del proyecto)
+	// y []interface{} (estándar JSON deserialized) para máxima compatibilidad.
+	switch req := params["required"].(type) {
+	case []string:
+		schema.Required = req
+	case []interface{}:
+		for _, r := range req {
 			if s, ok := r.(string); ok {
 				schema.Required = append(schema.Required, s)
 			}
