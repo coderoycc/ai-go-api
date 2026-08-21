@@ -45,14 +45,18 @@ func main() {
 	log.Println("Conexión a Redis establecida correctamente")
 
 	// 3. Inicializar Adaptador LLM según proveedor configurado
-	ctx := context.Background()
+	//    appCtx controla el ciclo de vida de los servicios (incluido el cliente Gemini).
+	//    Se cancela automáticamente al terminar main(), asegurando un cierre limpio de conexiones.
+	appCtx, stopServices := context.WithCancel(context.Background())
+	defer stopServices()
+
 	var llmAdapter ports.LLM
 
 	switch cfg.LLM.Provider {
 	case "openai":
 		llmAdapter = llmOpenAI.NewAdapter(cfg.LLM.APIKey, cfg.LLM.Model)
 	case "gemini":
-		llmAdapter, err = llmGemini.NewAdapter(ctx, cfg.LLM.APIKey, cfg.LLM.Model)
+		llmAdapter, err = llmGemini.NewAdapter(appCtx, cfg.LLM.APIKey, cfg.LLM.Model)
 		if err != nil {
 			log.Fatalf("Error inicializando adaptador Gemini: %v", err)
 		}
@@ -108,6 +112,9 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("Apagando servidor HTTP...")
+
+	// Cancelar el contexto de la aplicación para cerrar conexiones LLM en vuelo
+	stopServices()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

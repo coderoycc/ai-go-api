@@ -59,18 +59,7 @@ func (t *StockCheckTool) Parameters() map[string]any {
 	}
 }
 
-func (t *StockCheckTool) ResponseSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"codigo":     map[string]any{"type": "string"},
-			"stock":      map[string]any{"type": "integer"},
-			"tienda":     map[string]any{"type": "string"},
-			"disponible": map[string]any{"type": "boolean"},
-		},
-	}
-}
-
 func (t *StockCheckTool) ExcludedFields() []string {
 	return []string{"debug_info", "internal_trace_id"}
 }
+

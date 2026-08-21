@@ -13,17 +13,14 @@ import (
 )
 
 const (
-	// systemPrompt es el prompt base del asistente de negocio.
-	systemPrompt = `Eres un asistente de ventas inteligente. Tu rol es ayudar a los usuarios con:
-- Buscar productos y consultar disponibilidad.
-- Verificar stock de productos.
-- Crear, consultar y cancelar ventas.
-
-Responde de forma concisa, profesional y en el mismo idioma que el usuario.
-Cuando necesites datos, usa las herramientas disponibles. No inventes información.`
+	// defaultSystemPrompt es el prompt de respaldo del orquestador cuando ningún endpoint
+	// inyecta un SystemPrompt personalizado vía HandleChatWithPrompt.
+	// Debe ser genérico y agnóstico al dominio: la lógica de negocio pertenece
+	// a cada FeatureRecipe definida en la capa de infraestructura (router/engine).
+	defaultSystemPrompt = `Eres un asistente inteligente. Responde de forma concisa y profesional en el mismo idioma que el usuario. Cuando necesites datos externos, usa las herramientas disponibles. No inventes información.`
 
 	// maxToolCallIterations limita las iteraciones del loop agente para prevenir ciclos infinitos.
-	// Con 5 iteraciones se soportan flujos como: listar marcas → buscar por ID → consultar stock → responder.
+	// Con 5 iteraciones se soportan flujos como: listar marcas -> buscar por ID -> consultar stock -> responder.
 	maxToolCallIterations = 5
 )
 
@@ -35,8 +32,8 @@ type ChatInput struct {
 	Permission models.Permission `json:"permission,omitempty"`
 }
 
-// Orchestrator es el núcleo coordinador del AI Engine. Ensambla la secuencia completa:
-// Intent Detector → Context Manager → LLM Agentic Loop (Tool Calling) → Policy Engine → Response Formatter.
+// Orchestrator es el nucleo coordinador del AI Engine. Ensambla la secuencia completa:
+// Intent Detector -> Context Manager -> LLM Agentic Loop (Tool Calling) -> Policy Engine -> Response Formatter.
 type Orchestrator struct {
 	llm            ports.LLM
 	contextManager *appctx.Manager
@@ -62,36 +59,37 @@ func NewOrchestrator(
 	}
 }
 
-// HandleChat procesa una solicitud de chat del usuario usando el prompt del sistema por defecto.
+// HandleChat procesa una solicitud de chat usando el prompt de respaldo generico del orquestador.
+// Para funcionalidades de dominio especifico, usar HandleChatWithPrompt con un prompt dedicado.
 func (o *Orchestrator) HandleChat(ctx context.Context, input ChatInput, tools []ports.Tool) response.APIResponse {
-	return o.HandleChatWithPrompt(ctx, input, tools, systemPrompt)
+	return o.HandleChatWithPrompt(ctx, input, tools, defaultSystemPrompt)
 }
 
-// HandleChatWithPrompt procesa una solicitud de chat ejecutando el pipeline completo con un systemPrompt personalizado:
-//  1. Carga o crea la sesión del usuario.
+// HandleChatWithPrompt procesa una solicitud de chat ejecutando el pipeline completo:
+//  1. Carga o crea la sesion del usuario.
 //  2. Agrega el mensaje del usuario al historial.
-//  3. Valida la intención del mensaje vía IntentDetector.
+//  3. Valida la intencion del mensaje via IntentDetector.
 //  4. Ejecuta el loop agente: llama al LLM, ejecuta tools si las solicita, repite hasta
 //     que el LLM genere una respuesta natural o se alcance maxToolCallIterations.
 func (o *Orchestrator) HandleChatWithPrompt(ctx context.Context, input ChatInput, tools []ports.Tool, customSystemPrompt string) response.APIResponse {
 	if customSystemPrompt == "" {
-		customSystemPrompt = systemPrompt
+		customSystemPrompt = defaultSystemPrompt
 	}
 
-	// 1. CONTEXT MANAGER — Cargar o crear sesión
+	// 1. CONTEXT MANAGER - Cargar o crear sesion
 	session, err := o.contextManager.LoadOrCreate(ctx, input.SessionID)
 	if err != nil {
-		log.Printf("[orchestrator] error cargando sesión: %v", err)
-		return o.formatter.FormatError(input.SessionID, "Error interno al cargar la sesión.")
+		log.Printf("[orchestrator] error cargando sesion: %v", err)
+		return o.formatter.FormatError(input.SessionID, "Error interno al cargar la sesion.")
 	}
 
 	// 2. Agregar el mensaje del usuario al historial
-	o.contextManager.AddUserMessage(ctx, session, input.Message)
+	o.contextManager.AddUserMessage(session, input.Message)
 
-	// 3. Validar la intención del mensaje
+	// 3. Validar la intencion del mensaje
 	isValid, actionType, err := o.intentDetector.Validate(ctx, input.Message)
 	if err != nil || !isValid {
-		log.Printf("[orchestrator] intención no válida para mensaje: %q (err: %v)", input.Message, err)
+		log.Printf("[orchestrator] intencion no valida para mensaje: %q (err: %v)", input.Message, err)
 		o.saveSession(ctx, session)
 		return o.formatter.FormatError(input.SessionID, models.ErrInvalidIntent.Error())
 	}
@@ -102,18 +100,18 @@ func (o *Orchestrator) HandleChatWithPrompt(ctx context.Context, input ChatInput
 
 // runAgentLoop implementa el ciclo agente completo de Tool Calling.
 //
-// En cada iteración:
-//   - Construye el contexto de mensajes desde la sesión (incluye resultados de tools anteriores).
+// En cada iteracion:
+//   - Construye el contexto de mensajes desde la sesion (incluye resultados de tools anteriores).
 //   - Llama al LLM con las herramientas disponibles.
 //   - Si el LLM responde en lenguaje natural: retorna la respuesta formateada.
 //   - Si el LLM solicita tools: valida permisos, ejecuta cada tool, persiste los resultados
-//     en el historial con RoleTool + ToolCallID y continúa al siguiente ciclo.
+//     en el historial con RoleTool + ToolCallID y continua al siguiente ciclo.
 //
-// Ejemplo de flujo de 2 iteraciones (marca → producto):
+// Ejemplo de flujo de 2 iteraciones (marca -> producto):
 //
-//	Iter 1: LLM → tool get_brands()       → [{"id":5,"nombre":"Monopol"}]
-//	Iter 2: LLM → tool search_products(5) → [{"codigo":"P1","nombre":"Pintura Monopol"}]
-//	Iter 3: LLM → "Encontré 3 productos de la marca Monopol: ..."  ✅
+//	Iter 1: LLM -> tool get_brands()       -> [{"id":5,"nombre":"Monopol"}]
+//	Iter 2: LLM -> tool search_products(5) -> [{"codigo":"P1","nombre":"Pintura Monopol"}]
+//	Iter 3: LLM -> "Encontre 3 productos de la marca Monopol: ..."  OK
 func (o *Orchestrator) runAgentLoop(
 	ctx context.Context,
 	input ChatInput,
@@ -126,7 +124,7 @@ func (o *Orchestrator) runAgentLoop(
 	totalTokens := 0
 
 	for iteration := 0; iteration < maxToolCallIterations; iteration++ {
-		log.Printf("[orchestrator] loop agente — iteración %d/%d (sesión: %s)", iteration+1, maxToolCallIterations, input.SessionID)
+		log.Printf("[orchestrator] loop agente - iteracion %d/%d (sesion: %s)", iteration+1, maxToolCallIterations, input.SessionID)
 
 		// Construir mensajes desde el historial actualizado (incluye resultados de tools anteriores)
 		messages := o.contextManager.BuildContextMessages(session, customSystemPrompt)
@@ -149,21 +147,21 @@ func (o *Orchestrator) runAgentLoop(
 			totalTokens += resp.Usage.TotalTokens
 		}
 
-		// El LLM respondió en lenguaje natural → fin del loop
+		// El LLM respondio en lenguaje natural -> fin del loop
 		if len(resp.ToolCalls) == 0 {
-			log.Printf("[orchestrator] respuesta natural del LLM en iteración %d (tokens totales: %d)", iteration+1, totalTokens)
-			o.contextManager.AddAssistantMessage(ctx, session, resp.Content)
+			log.Printf("[orchestrator] respuesta natural del LLM en iteracion %d (tokens totales: %d)", iteration+1, totalTokens)
+			o.contextManager.AddAssistantMessage(session, resp.Content)
 			o.saveSession(ctx, session)
 			return o.formatter.FormatNatural(input.SessionID, resp.Content, actionType, totalTokens)
 		}
 
-		log.Printf("[orchestrator] LLM solicita %d herramienta(s) en iteración %d", len(resp.ToolCalls), iteration+1)
+		log.Printf("[orchestrator] LLM solicita %d herramienta(s) en iteracion %d", len(resp.ToolCalls), iteration+1)
 
 		// Persistir el mensaje del asistente con sus solicitudes de tools ANTES de los resultados.
 		// Esto es requerido por todos los proveedores LLM para reconstruir el historial correctamente.
-		o.contextManager.AddAssistantToolCallMessage(ctx, session, resp.Content, resp.ToolCalls)
+		o.contextManager.AddAssistantToolCallMessage(session, resp.Content, resp.ToolCalls)
 
-		// Ejecutar TODAS las tools solicitadas en esta iteración
+		// Ejecutar TODAS las tools solicitadas en esta iteracion
 		for _, toolCall := range resp.ToolCalls {
 			log.Printf("[orchestrator] ejecutando tool %q con args: %s", toolCall.Name, toolCall.Arguments)
 
@@ -199,20 +197,20 @@ func (o *Orchestrator) runAgentLoop(
 				return o.formatter.FormatError(input.SessionID, "Error al procesar el resultado de la herramienta.")
 			}
 
-			log.Printf("[orchestrator] tool %q completada — resultado: %d bytes", toolCall.Name, len(resultBytes))
+			log.Printf("[orchestrator] tool %q completada - resultado: %d bytes", toolCall.Name, len(resultBytes))
 
-			// Registrar el resultado en la sesión con RoleTool (rol correcto para todos los LLMs)
+			// Registrar el resultado en la sesion con RoleTool (rol correcto para todos los LLMs)
 			o.contextManager.UpdateLastTool(session, toolCall.Name)
-			o.contextManager.AddToolResultMessage(ctx, session, toolCall.ID, toolCall.Name, string(resultBytes))
+			o.contextManager.AddToolResultMessage(session, toolCall.ID, toolCall.Name, string(resultBytes))
 		}
 
-		// Continuar al siguiente ciclo con el historial enriquecido con los resultados de las tools
+		// Continuar al siguiente ciclo con el historial enriquecido
 	}
 
-	// Se alcanzó el límite de iteraciones sin que el LLM generara una respuesta final
-	log.Printf("[orchestrator] límite de iteraciones alcanzado (%d) para sesión %s", maxToolCallIterations, input.SessionID)
+	// Se alcanzo el limite de iteraciones sin que el LLM generara una respuesta final
+	log.Printf("[orchestrator] limite de iteraciones alcanzado (%d) para sesion %s", maxToolCallIterations, input.SessionID)
 	o.saveSession(ctx, session)
-	return o.formatter.FormatError(input.SessionID, "El asistente requirió demasiados pasos para responder. Intenta reformular tu pregunta.")
+	return o.formatter.FormatError(input.SessionID, "El asistente requirio demasiados pasos para responder. Intenta reformular tu pregunta.")
 }
 
 // definitions convierte las herramientas disponibles en el formato que espera el LLM.
@@ -238,9 +236,9 @@ func findTool(tools []ports.Tool, name string) (ports.Tool, bool) {
 	return nil, false
 }
 
-// saveSession persiste la sesión de forma segura (loguea el error sin propagarlo).
+// saveSession persiste la sesion de forma segura (loguea el error sin propagarlo).
 func (o *Orchestrator) saveSession(ctx context.Context, session *models.SessionContext) {
 	if err := o.contextManager.Save(ctx, session); err != nil {
-		log.Printf("[orchestrator] error al guardar sesión %s: %v", session.SessionID, err)
+		log.Printf("[orchestrator] error al guardar sesion %s: %v", session.SessionID, err)
 	}
 }

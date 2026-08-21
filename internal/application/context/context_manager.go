@@ -57,8 +57,8 @@ func (m *Manager) Save(ctx context.Context, session *models.SessionContext) erro
 	return nil
 }
 
-// AddUserMessage agrega un mensaje del usuario al historial y persiste.
-func (m *Manager) AddUserMessage(ctx context.Context, session *models.SessionContext, content string) {
+// AddUserMessage agrega un mensaje del usuario al historial de la sesion.
+func (m *Manager) AddUserMessage(session *models.SessionContext, content string) {
 	session.AddMessage(models.Message{
 		Role:    models.RoleUser,
 		Content: content,
@@ -67,7 +67,7 @@ func (m *Manager) AddUserMessage(ctx context.Context, session *models.SessionCon
 
 // AddAssistantMessage agrega la respuesta de texto del asistente al historial.
 // Usar solo cuando el LLM responde en lenguaje natural (sin ToolCalls).
-func (m *Manager) AddAssistantMessage(ctx context.Context, session *models.SessionContext, content string) {
+func (m *Manager) AddAssistantMessage(session *models.SessionContext, content string) {
 	session.AddMessage(models.Message{
 		Role:    models.RoleAssistant,
 		Content: content,
@@ -77,7 +77,7 @@ func (m *Manager) AddAssistantMessage(ctx context.Context, session *models.Sessi
 // AddAssistantToolCallMessage persiste el mensaje del asistente que contiene
 // solicitudes de herramientas (ToolCalls). Este mensaje debe guardarse en el historial
 // ANTES del resultado de la tool para que los LLMs reconstruyan el contexto correctamente.
-func (m *Manager) AddAssistantToolCallMessage(ctx context.Context, session *models.SessionContext, content string, toolCalls []models.ToolCall) {
+func (m *Manager) AddAssistantToolCallMessage(session *models.SessionContext, content string, toolCalls []models.ToolCall) {
 	session.AddMessage(models.Message{
 		Role:      models.RoleAssistant,
 		Content:   content,
@@ -88,7 +88,7 @@ func (m *Manager) AddAssistantToolCallMessage(ctx context.Context, session *mode
 // AddToolResultMessage persiste el resultado de la ejecución de una herramienta
 // con el rol correcto (RoleTool) y el ToolCallID que lo asocia a la solicitud del LLM.
 // Esto permite que el LLM en la siguiente iteración conozca el resultado y tome decisiones.
-func (m *Manager) AddToolResultMessage(ctx context.Context, session *models.SessionContext, toolCallID, toolName, result string) {
+func (m *Manager) AddToolResultMessage(session *models.SessionContext, toolCallID, toolName, result string) {
 	session.AddMessage(models.Message{
 		Role:       models.RoleTool,
 		Content:    result,

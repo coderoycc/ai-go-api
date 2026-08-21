@@ -102,7 +102,7 @@ func AuthMiddleware(apiKey string, enabled bool) gin.HandlerFunc {
 			}
 		}
 
-		c.Set("authenticated", !enabled || true)
+		c.Set("authenticated", true)
 		c.Set("user_id", c.GetHeader("X-User-ID"))
 		c.Set("permission", userPerm)
 		c.Next()

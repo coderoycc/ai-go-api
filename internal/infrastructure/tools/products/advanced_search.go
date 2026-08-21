@@ -75,19 +75,7 @@ func (t *AdvancedSearchTool) Parameters() map[string]any {
 	}
 }
 
-func (t *AdvancedSearchTool) ResponseSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"total":             map[string]any{"type": "integer", "description": "Total de productos encontrados."},
-			"pagina":            map[string]any{"type": "integer", "description": "Página actual."},
-			"limite":            map[string]any{"type": "integer", "description": "Límite de resultados."},
-			"filtros_aplicados": map[string]any{"type": "object", "description": "Filtros aplicados."},
-			"productos":         map[string]any{"type": "array", "description": "Lista de productos."},
-		},
-	}
-}
-
 func (t *AdvancedSearchTool) ExcludedFields() []string {
 	return []string{"limite", "pagina", "filtros_aplicados"}
 }
+
